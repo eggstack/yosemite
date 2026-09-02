@@ -44,6 +44,9 @@ pub enum ProtocolError {
     /// Invalid state for an operation.
     InvalidState,
 
+    /// Invalid session option.
+    InvalidOption,
+
     /// Router sent an invalid message.
     InvalidMessage,
 
@@ -55,6 +58,7 @@ impl fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidState => write!(f, "invalid state"),
+            Self::InvalidOption => write!(f, "invalid session option"),
             Self::InvalidMessage => write!(f, "invalid message from router"),
             Self::Router(error) => write!(f, "router error: {error:?}"),
         }

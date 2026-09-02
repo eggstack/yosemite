@@ -103,6 +103,8 @@ pub struct SessionController {
 impl SessionController {
     /// Create new [`SessionController`] from `options`.
     pub fn new(options: SessionOptions) -> Result<Self, ProtocolError> {
+        options.validate_additional_options()?;
+
         Ok(Self {
             options,
             state: SessionState::Uninitialized,
@@ -157,6 +159,10 @@ impl SessionController {
         &mut self,
         parameters: SessionParameters,
     ) -> Result<Vec<u8>, ProtocolError> {
+        // SessionOptions is publicly mutable, so validate again immediately before constructing
+        // any wire command. This also keeps invalid options from changing the controller state.
+        self.options.validate_additional_options()?;
+
         match std::mem::replace(&mut self.state, SessionState::Poisoned) {
             SessionState::Handshaked => {
                 tracing::trace!(
@@ -242,7 +248,28 @@ impl SessionController {
                 )
                 .as_str();
 
-                command += "SIGNATURE_TYPE=7\n";
+                command += format!(
+                    "inbound.lengthVariance={} inbound.backupQuantity={} ",
+                    self.options.inbound_len_variance, self.options.inbound_backup_quantity
+                )
+                .as_str();
+
+                command += format!(
+                    "outbound.lengthVariance={} outbound.backupQuantity={} ",
+                    self.options.outbound_len_variance, self.options.outbound_backup_quantity
+                )
+                .as_str();
+
+                command += format!("SIGNATURE_TYPE={}", self.options.signature_type).as_str();
+
+                let mut additional_options =
+                    self.options.additional_options.iter().collect::<Vec<_>>();
+                additional_options.sort_by(|left, right| left.key().cmp(right.key()));
+                for option in additional_options {
+                    command += format!(" {}={}", option.key(), option.value()).as_str();
+                }
+
+                command.push('\n');
 
                 Ok(command.into_bytes())
             }
@@ -677,6 +704,189 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        SessionOption, MAX_ADDITIONAL_SESSION_OPTIONS, MAX_SESSION_OPTION_KEY_LENGTH,
+        MAX_SESSION_OPTION_VALUE_LENGTH,
+    };
+
+    fn handshaked_controller(options: SessionOptions) -> SessionController {
+        let mut controller = SessionController::new(options).unwrap();
+        assert_eq!(
+            controller.handshake_session(),
+            Ok(b"HELLO VERSION\n".to_vec())
+        );
+        controller.handle_response("HELLO REPLY RESULT=OK VERSION=3.3\n").unwrap();
+        controller
+    }
+
+    fn create_stream_command(options: SessionOptions) -> Result<String, ProtocolError> {
+        let mut controller = handshaked_controller(options);
+        let command = controller.create_session(SessionParameters {
+            style: "STREAM".to_string(),
+            options: Vec::new(),
+        })?;
+        Ok(String::from_utf8(command).unwrap())
+    }
+
+    fn option_count(command: &str, key: &str) -> usize {
+        command
+            .split_whitespace()
+            .filter(|token| token.strip_prefix(key).is_some_and(|value| value.starts_with('=')))
+            .count()
+    }
+
+    #[test]
+    fn session_create_serializes_typed_options() {
+        let command = create_stream_command(SessionOptions::default()).unwrap();
+        assert!(command.ends_with(
+            "inbound.lengthVariance=0 inbound.backupQuantity=0 outbound.lengthVariance=0 outbound.backupQuantity=0 SIGNATURE_TYPE=7\n"
+        ));
+        assert_eq!(option_count(&command, "SIGNATURE_TYPE"), 1);
+
+        let command = create_stream_command(SessionOptions {
+            signature_type: 11,
+            inbound_len_variance: -2,
+            outbound_len_variance: 3,
+            inbound_backup_quantity: 4,
+            outbound_backup_quantity: 5,
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(option_count(&command, "SIGNATURE_TYPE"), 1);
+        assert!(command.contains("SIGNATURE_TYPE=11"));
+        assert!(command.contains("inbound.lengthVariance=-2"));
+        assert!(command.contains("outbound.lengthVariance=3"));
+        assert!(command.contains("inbound.backupQuantity=4"));
+        assert!(command.contains("outbound.backupQuantity=5"));
+        assert_eq!(option_count(&command, "inbound.lengthVariance"), 1);
+        assert_eq!(option_count(&command, "outbound.lengthVariance"), 1);
+        assert_eq!(option_count(&command, "inbound.backupQuantity"), 1);
+        assert_eq!(option_count(&command, "outbound.backupQuantity"), 1);
+    }
+
+    #[test]
+    fn session_create_serializes_sorted_additional_options() {
+        let mut options = SessionOptions::default();
+        options.add_session_option("i2cp.zeta", "last").unwrap();
+        options.add_session_option("i2cp.alpha", "first").unwrap();
+
+        let command = create_stream_command(options).unwrap();
+        assert!(command.ends_with("SIGNATURE_TYPE=7 i2cp.alpha=first i2cp.zeta=last\n"));
+        assert_eq!(command.matches('\n').count(), 1);
+    }
+
+    #[test]
+    fn additional_options_reject_duplicates_and_reserved_keys() {
+        let mut options = SessionOptions::default();
+        options.add_session_option("i2cp.custom", "one").unwrap();
+        assert!(options.add_session_option("i2cp.custom", "two").is_err());
+
+        for key in [
+            "STYLE",
+            "ID",
+            "DESTINATION",
+            "SIGNATURE_TYPE",
+            "FROM_PORT",
+            "TO_PORT",
+            "PROTOCOL",
+            "HEADER",
+            "PORT",
+            "HOST",
+            "inbound.length",
+            "inbound.quantity",
+            "outbound.length",
+            "outbound.quantity",
+            "inbound.lengthVariance",
+            "inbound.backupQuantity",
+            "outbound.lengthVariance",
+            "outbound.backupQuantity",
+            "i2cp.dontPublishLeaseSet",
+            "i2cp.leaseSetEncType",
+        ] {
+            assert!(
+                options.add_session_option(key, "value").is_err(),
+                "reserved key was accepted: {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn additional_options_reject_injection_and_enforce_bounds() {
+        for (key, value) in [
+            ("", "value"),
+            ("i2cp.bad=key", "value"),
+            ("i2cp.bad key", "value"),
+            ("i2cp.bad\nkey", "value"),
+            ("i2cp.bad", "value with spaces"),
+            ("i2cp.bad", "value\nwith-newline"),
+            ("i2cp.bad", "value\0with-nul"),
+            ("i2cp.bad", "value=another-token"),
+            ("i2cp.bad", "value\\another-token"),
+        ] {
+            assert!(SessionOption::new(key, value).is_err());
+        }
+
+        let key = "k".repeat(MAX_SESSION_OPTION_KEY_LENGTH);
+        let value = "v".repeat(MAX_SESSION_OPTION_VALUE_LENGTH);
+        let mut options = SessionOptions::default();
+        options.add_session_option(key, value).unwrap();
+        assert!(SessionOption::new("k".repeat(MAX_SESSION_OPTION_KEY_LENGTH + 1), "v").is_err());
+        assert!(SessionOption::new("k", "v".repeat(MAX_SESSION_OPTION_VALUE_LENGTH + 1)).is_err());
+
+        for index in 1..MAX_ADDITIONAL_SESSION_OPTIONS {
+            options.add_session_option(format!("i2cp.option{index}"), "value").unwrap();
+        }
+        assert!(options.add_session_option("i2cp.tooMany", "value").is_err());
+        assert_eq!(
+            options.additional_options.len(),
+            MAX_ADDITIONAL_SESSION_OPTIONS
+        );
+    }
+
+    #[test]
+    fn invalid_public_option_collection_does_not_change_controller_state() {
+        let mut controller = handshaked_controller(SessionOptions::default());
+        let option = SessionOption::new("i2cp.option", "value").unwrap();
+        controller.options.additional_options = vec![option; MAX_ADDITIONAL_SESSION_OPTIONS + 1];
+
+        let result = controller.create_session(SessionParameters {
+            style: "STREAM".to_string(),
+            options: Vec::new(),
+        });
+        assert_eq!(result, Err(ProtocolError::InvalidOption));
+        assert_eq!(controller.state, SessionState::Handshaked);
+    }
+
+    #[test]
+    fn session_options_debug_redacts_private_and_additional_values() {
+        let private_key = "persistent-private-key-fixture";
+        let additional_value = "additional-secret-fixture";
+        let mut options = SessionOptions {
+            destination: DestinationKind::Persistent {
+                private_key: private_key.to_string(),
+            },
+            lease_set_key: Some("lease-set-key-fixture".to_string()),
+            lease_set_private_key: Some("lease-set-private-key-fixture".to_string()),
+            lease_set_secret: Some("lease-set-secret-fixture".to_string()),
+            lease_set_signing_private_key: Some("lease-set-signing-key-fixture".to_string()),
+            ..Default::default()
+        };
+        options.add_session_option("i2cp.custom", additional_value).unwrap();
+
+        let debug = format!("{options:?}");
+        for secret in [
+            private_key,
+            additional_value,
+            "lease-set-key-fixture",
+            "lease-set-private-key-fixture",
+            "lease-set-secret-fixture",
+            "lease-set-signing-key-fixture",
+        ] {
+            assert!(!debug.contains(secret));
+        }
+        assert!(debug.contains("<redacted>"));
+    }
 
     #[test]
     fn open_virtual_stream() {
