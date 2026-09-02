@@ -39,13 +39,13 @@ At the baseline:
 Y001 bounded SESSION CREATE option surface          [CLOSED]
   |
   v
-Y002 signature-aware DEST GENERATE API              [READY]
+Y002 signature-aware DEST GENERATE API              [CLOSED]
   |
   +--------------------------+
   |                          |
   v                          v
 Emissary M117 adoption       Y003 LeaseSet option surface
-[external/internal blocker]  [ROADMAP ONLY / SEMANTICALLY BLOCKED]
+[UNBLOCKED; pin Y002]        [ROADMAP ONLY / SEMANTICALLY BLOCKED]
 ```
 
 Y003 additionally depends on the consuming Emissary M113 semantic/client-auth contract being frozen so Yosemite does not invent consumer policy.
@@ -62,25 +62,23 @@ Closure:
 
 - `plans/closure/001-bounded-session-create-option-surface.md`
 
-## Current handoff — Y002
+## Recently closed — Y002
 
 Plan:
 
 - `plans/implementation/002-signature-aware-destination-generation.md`
 
-Status: **ready**.
+Status: **closed** at implementation commit `8026f5b424fc178d683e63555335f8b33e0aba04`.
+
+Closure:
+
+- `plans/closure/002-signature-aware-destination-generation.md`
 
 Objective: add a generic signature-type-aware `DEST GENERATE` path for both async and sync Router APIs while preserving the default method.
 
-Y001 closure makes the signature representation/validation dependency ready. No Emissary/I2PControl concepts, dependency additions, TLS behavior, LeaseSet crypto implementation, upstream interaction, or release work are authorized.
+The Emissary M117 adoption boundary is unblocked and may pin the implementation commit above. No Emissary/I2PControl concepts, dependency additions, TLS behavior, LeaseSet crypto implementation, upstream interaction, or release work were added.
 
 ## Roadmap-defined future plans
-
-### Y002
-
-`plans/implementation/002-signature-aware-destination-generation.md`
-
-Ready at the closed Y001 implementation commit. Preserve `generate_destination()` as the Ed25519/default compatibility path and add a generic signature-type-aware path for both async and sync Router APIs.
 
 ### Y003
 
@@ -90,8 +88,6 @@ Proposed/blocked. Serialize only reference-proven generic LeaseSet/I2CP session 
 
 ## Registry rules
 
-1. Y002 is the sole dependency-ready Yosemite handoff.
-2. Y002 is ready because Y001 closed and its option/validation types are stable.
-3. Y003 MUST NOT execute from this registry until the consuming contract is frozen and it is explicitly promoted.
-4. Default Yosemite behavior must remain compatible for callers that do not set new options.
-5. All work is internal-only; no upstream PR/issue/review/release/contact is authorized.
+1. Y003 MUST NOT execute from this registry until the consuming contract is frozen and it is explicitly promoted.
+2. Default Yosemite behavior must remain compatible for callers that do not set new options.
+3. All work is internal-only; no upstream PR/issue/review/release/contact is authorized.

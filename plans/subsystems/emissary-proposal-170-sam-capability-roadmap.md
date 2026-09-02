@@ -1,6 +1,6 @@
 # Emissary Proposal 170 — Yosemite SAM Capability Roadmap
 
-Status: active; Y001 ready; Y002/Y003 roadmap-defined and blocked by dependency/semantic gates
+Status: active; Y001/Y002 closed; Y003 roadmap-defined and blocked by a semantic gate
 
 Baseline: `d0fe71da214b212790773be12a93162ae71f3e03` (Yosemite 0.7.0)
 
@@ -71,10 +71,10 @@ This roadmap does not:
 ## 6. Dependency graph
 
 ```text
-Y001 SESSION CREATE option surface        [READY]
+Y001 SESSION CREATE option surface        [CLOSED]
   |
   v
-Y002 signature-aware DEST GENERATE        [BLOCKED ON Y001]
+Y002 signature-aware DEST GENERATE        [CLOSED]
 
 Y003 LeaseSet option surface              [BLOCKED ON Y001 + EMISSARY M113 INTERFACE]
 ```
@@ -104,6 +104,8 @@ Plan: `plans/implementation/002-signature-aware-destination-generation.md`
 Add an explicitly typed/parameterized public destination-generation path that serializes the requested SAM `SIGNATURE_TYPE`, while preserving the current parameterless API as the compatibility/default Ed25519 path. Async and sync APIs must match.
 
 Y002 does not add signing algorithms to routers and does not decide which signature types Emissary supports.
+
+Y002 is closed at implementation commit `8026f5b424fc178d683e63555335f8b33e0aba04`; Emissary M117 may pin this exact internal revision.
 
 ## 9. Y003 — LeaseSet session-option surface
 

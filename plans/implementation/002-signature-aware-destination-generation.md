@@ -1,6 +1,8 @@
 # Y002 — Signature-Aware Destination Generation
 
-Status: **ready**
+Status: **closed**
+
+Closure record: `plans/closure/002-signature-aware-destination-generation.md`
 
 Class: capability / public API / protocol serialization
 
