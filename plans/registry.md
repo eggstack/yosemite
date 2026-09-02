@@ -89,7 +89,7 @@ Plan:
 
 - `plans/implementation/003-leaseset-session-option-surface.md`
 
-Status: **closed** at implementation commit `__Y003_HEAD__` (to be filled on commit).
+Status: **closed** at implementation commit `9ac7d9a0ac2a8d526e363f150466b579b017e116` (to be filled on commit).
 
 Closure:
 

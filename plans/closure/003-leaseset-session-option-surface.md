@@ -6,7 +6,7 @@ Plan: `plans/implementation/003-leaseset-session-option-surface.md`
 
 Baseline: `472b6684a3f7f967e4023661e479f55b850080bd` (Y002 closure head)
 
-Implementation commit: `__Y003_HEAD__` — generic SAM/I2CP LeaseSet transport and bounded client-auth.
+Implementation commit: `9ac7d9a0ac2a8d526e363f150466b579b017e116` — generic SAM/I2CP LeaseSet transport and bounded client-auth.
 
 This is the exact production commit that the consuming Emissary plan may pin. Closure/registry/roadmap
 follow-up edits are documentation-only. This closure supersedes the prior `closed as blocked`
@@ -36,7 +36,7 @@ had no mapping, Y003 validates and fails closed rather than emitting a weaker fa
 
 ## 2. Implementation commits
 
-- `__Y003_HEAD__` — implement generic LeaseSet SESSION CREATE transport, bounded client-auth,
+- `9ac7d9a0ac2a8d526e363f150466b579b017e116` — implement generic LeaseSet SESSION CREATE transport, bounded client-auth,
   validation/redaction, and focused tests (production paths `src/options.rs`, `src/proto/session.rs`,
   `src/lib.rs`).
 
@@ -109,7 +109,7 @@ None within Y003 scope. M113's `OptionalLookup` lookup-policy serializer remains
 
 ## 7. Future-plan disposition
 
-Y003 is now **closed**. No Yosemite successor is blocked; the roadmap and registry are updated to `Y003 closed`. Emissary M113 remains closed as blocked at `82368ea` with 21 retained cells, but its required Yosemite primitive is now available (`__Y003_HEAD__`) for a future M113 retry or successor plan that wishes to pin the new revision. No new Yosemite plan is automatically promoted. M117 remains independently unblocked by Y001/Y002 at `8026f5b`.
+Y003 is now **closed**. No Yosemite successor is blocked; the roadmap and registry are updated to `Y003 closed`. Emissary M113 remains closed as blocked at `82368ea` with 21 retained cells, but its required Yosemite primitive is now available (`9ac7d9a0ac2a8d526e363f150466b579b017e116`) for a future M113 retry or successor plan that wishes to pin the new revision. No new Yosemite plan is automatically promoted. M117 remains independently unblocked by Y001/Y002 at `8026f5b`.
 
 No writes were made to the consuming Emissary repository; M113 status was read-only evidence.
 

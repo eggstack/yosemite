@@ -112,7 +112,7 @@ Y002 is closed at implementation commit `8026f5b424fc178d683e63555335f8b33e0aba0
 
 Plan: `plans/implementation/003-leaseset-session-option-surface.md`
 
-Status: **closed** at implementation commit `__Y003_HEAD__` (Yosemite's generic SAM/I2CP LeaseSet transport).
+Status: **closed** at implementation commit `9ac7d9a0ac2a8d526e363f150466b579b017e116` (Yosemite's generic SAM/I2CP LeaseSet transport).
 
 Y003 completes the small generic SAM/I2CP LeaseSet session-option surface: it wires existing
 `SessionOptions` LeaseSet fields (`encrypt_lease_set`, `lease_set_auth_type`,
