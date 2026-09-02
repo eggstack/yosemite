@@ -45,7 +45,7 @@ Y002 signature-aware DEST GENERATE API              [CLOSED]
   |                          |
   v                          v
 Emissary M117 adoption       Y003 LeaseSet option surface
-[UNBLOCKED; pin Y002]        [ROADMAP ONLY / SEMANTICALLY BLOCKED]
+[UNBLOCKED; pin Y002]        [CLOSED AS BLOCKED; M113 contract absent]
 ```
 
 Y003 additionally depends on the consuming Emissary M113 semantic/client-auth contract being frozen so Yosemite does not invent consumer policy.
@@ -84,10 +84,14 @@ The Emissary M117 adoption boundary is unblocked and may pin the implementation 
 
 `plans/implementation/003-leaseset-session-option-surface.md`
 
-Proposed/blocked. Serialize only reference-proven generic LeaseSet/I2CP session settings and bounded client-auth entries. This milestone implements no LeaseSet cryptography and does not become ready until Emissary M113 freezes the exact required semantic/interface surface.
+Closed as blocked in `plans/closure/003-leaseset-session-option-surface.md`. No production
+implementation was authorized or landed because Emissary M113 remains proposed/blocked and
+still records the required LeaseSet serializer, lookup-policy serializer, and client-auth
+key-handoff primitives as unavailable. A later replacement or successor Y003 implementation
+may not be promoted until that contract is frozen and the required neutral owner is accepted.
 
 ## Registry rules
 
-1. Y003 MUST NOT execute from this registry until the consuming contract is frozen and it is explicitly promoted.
+1. A replacement or successor Y003 implementation MUST NOT execute from this registry until the consuming contract is frozen and it is explicitly promoted.
 2. Default Yosemite behavior must remain compatible for callers that do not set new options.
 3. All work is internal-only; no upstream PR/issue/review/release/contact is authorized.

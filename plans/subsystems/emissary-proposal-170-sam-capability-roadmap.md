@@ -1,6 +1,6 @@
 # Emissary Proposal 170 — Yosemite SAM Capability Roadmap
 
-Status: active; Y001/Y002 closed; Y003 roadmap-defined and blocked by a semantic gate
+Status: active; Y001/Y002 closed; Y003 closed as blocked pending the M113 semantic gate
 
 Baseline: `d0fe71da214b212790773be12a93162ae71f3e03` (Yosemite 0.7.0)
 
@@ -76,7 +76,7 @@ Y001 SESSION CREATE option surface        [CLOSED]
   v
 Y002 signature-aware DEST GENERATE        [CLOSED]
 
-Y003 LeaseSet option surface              [BLOCKED ON Y001 + EMISSARY M113 INTERFACE]
+Y003 LeaseSet option surface              [CLOSED AS BLOCKED; EMISSARY M113 INTERFACE ABSENT]
 ```
 
 Emissary adoption is an external/internal consumer dependency and occurs only after exact Yosemite commits close the relevant milestones.
@@ -111,7 +111,7 @@ Y002 is closed at implementation commit `8026f5b424fc178d683e63555335f8b33e0aba0
 
 Plan: `plans/implementation/003-leaseset-session-option-surface.md`
 
-Once the Emissary M113 interface is frozen, serialize only the exact generic SAM/I2CP LeaseSet settings required by that contract, using existing typed `SessionOptions` fields where correct and a bounded typed client-auth representation where repeated/numbered options are necessary.
+Once the Emissary M113 interface is frozen and a successor is explicitly promoted, serialize only the exact generic SAM/I2CP LeaseSet settings required by that contract, using existing typed `SessionOptions` fields where correct and a bounded typed client-auth representation where repeated/numbered options are necessary.
 
 Y003 is transport/configuration plumbing only. Router-side encrypted/authenticated LeaseSet semantics remain outside Yosemite.
 

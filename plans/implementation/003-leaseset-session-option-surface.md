@@ -1,10 +1,10 @@
 # Y003 — LeaseSet Session-Option Surface
 
-Status: **proposed / semantically blocked**
+Status: **closed as blocked**
 
 Class: capability / protocol serialization / secret-handling boundary
 
-Baseline: to be frozen after Y001 and any required Y002-compatible public option types close.
+Baseline reviewed for closure: `472b6684a3f7f967e4023661e479f55b850080bd` (Y002 closure head)
 
 Source roadmap:
 
