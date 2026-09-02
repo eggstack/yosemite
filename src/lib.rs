@@ -30,8 +30,10 @@ mod proto;
 
 pub use error::{Error, I2pError, ProtocolError};
 pub use options::{
-    DatagramOptions, DestinationKind, SessionOption, SessionOptions, StreamOptions,
-    MAX_ADDITIONAL_SESSION_OPTIONS, MAX_SESSION_OPTION_KEY_LENGTH, MAX_SESSION_OPTION_VALUE_LENGTH,
+    DatagramOptions, DestinationKind, LeaseSetClientAuth, SessionOption, SessionOptions,
+    StreamOptions, MAX_ADDITIONAL_SESSION_OPTIONS, MAX_LEASE_SET_CLIENT_AUTHS,
+    MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH, MAX_LEASE_SET_SECRET_LENGTH,
+    MAX_SESSION_OPTION_KEY_LENGTH, MAX_SESSION_OPTION_VALUE_LENGTH,
 };
 
 #[cfg(any(feature = "tokio", feature = "smol"))]

@@ -1,10 +1,12 @@
 # Y003 — LeaseSet Session-Option Surface
 
-Status: **closed as blocked**
+Status: **closed**
+
+Closure record: `plans/closure/003-leaseset-session-option-surface.md`
 
 Class: capability / protocol serialization / secret-handling boundary
 
-Baseline reviewed for closure: `472b6684a3f7f967e4023661e479f55b850080bd` (Y002 closure head)
+Baseline: `472b6684a3f7f967e4023661e479f55b850080bd` (Y002 closure head)
 
 Source roadmap:
 

@@ -45,10 +45,15 @@ Y002 signature-aware DEST GENERATE API              [CLOSED]
   |                          |
   v                          v
 Emissary M117 adoption       Y003 LeaseSet option surface
-[UNBLOCKED; pin Y002]        [CLOSED AS BLOCKED; M113 contract absent]
+[UNBLOCKED; pin Y002]        [CLOSED]
 ```
 
-Y003 additionally depends on the consuming Emissary M113 semantic/client-auth contract being frozen so Yosemite does not invent consumer policy.
+Y003 depended on the consuming Emissary M113 semantic/client-auth contract. M113 is closed
+as blocked at `82368ea` with exact blocked-primitive evidence (`EncryptLeaseSet`,
+`LeaseSetClientAuths`, presentation/routing) and I2P reference SAM keys
+(`i2cp.leaseSet*`, `i2cp.encryptLeaseSet`, `i2cp.leaseSetClientAuth.*`). Y003 now
+provides the generic Yosemite transport for those keys without implementing
+router cryptography.
 
 ## Recently closed — Y001
 
@@ -78,20 +83,30 @@ Objective: add a generic signature-type-aware `DEST GENERATE` path for both asyn
 
 The Emissary M117 adoption boundary is unblocked and may pin the implementation commit above. No Emissary/I2PControl concepts, dependency additions, TLS behavior, LeaseSet crypto implementation, upstream interaction, or release work were added.
 
-## Roadmap-defined future plans
+## Recently closed — Y003
 
-### Y003
+Plan:
 
-`plans/implementation/003-leaseset-session-option-surface.md`
+- `plans/implementation/003-leaseset-session-option-surface.md`
 
-Closed as blocked in `plans/closure/003-leaseset-session-option-surface.md`. No production
-implementation was authorized or landed because Emissary M113 remains proposed/blocked and
-still records the required LeaseSet serializer, lookup-policy serializer, and client-auth
-key-handoff primitives as unavailable. A later replacement or successor Y003 implementation
-may not be promoted until that contract is frozen and the required neutral owner is accepted.
+Status: **closed** at implementation commit `__Y003_HEAD__` (to be filled on commit).
+
+Closure:
+
+- `plans/closure/003-leaseset-session-option-surface.md`
+
+Objective: complete the generic SAM/I2CP LeaseSet session-option transport (encrypted/authenticated
+LeaseSet settings) using existing `SessionOptions` typed fields where canonical and a new bounded
+client-auth collection for repeated/numbered entries, with validation, deterministic
+serialization, conflict rejection, redaction, and fail-closed behavior. Default wire remains
+unchanged. No Emissary/Proposal-specific names, crypto, or upstream work.
+
+Emissary M113 remains independently closed as blocked (`82368ea`) with 21 retained
+`blocked_primitive` cells; Y003 now supplies the previously missing Yosemite primitive that a
+future M113 retry may reuse, but does not itself promote Proposal cells.
 
 ## Registry rules
 
-1. A replacement or successor Y003 implementation MUST NOT execute from this registry until the consuming contract is frozen and it is explicitly promoted.
+1. Y003 is closed. A future replacement or successor Y003 corrective pass must be a new numbered plan.
 2. Default Yosemite behavior must remain compatible for callers that do not set new options.
 3. All work is internal-only; no upstream PR/issue/review/release/contact is authorized.

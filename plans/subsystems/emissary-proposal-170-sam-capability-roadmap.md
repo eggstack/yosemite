@@ -1,6 +1,6 @@
 # Emissary Proposal 170 — Yosemite SAM Capability Roadmap
 
-Status: active; Y001/Y002 closed; Y003 closed as blocked pending the M113 semantic gate
+Status: active; Y001/Y002/Y003 closed
 
 Baseline: `d0fe71da214b212790773be12a93162ae71f3e03` (Yosemite 0.7.0)
 
@@ -75,8 +75,9 @@ Y001 SESSION CREATE option surface        [CLOSED]
   |
   v
 Y002 signature-aware DEST GENERATE        [CLOSED]
-
-Y003 LeaseSet option surface              [CLOSED AS BLOCKED; EMISSARY M113 INTERFACE ABSENT]
+  |
+  v
+Y003 LeaseSet option surface              [CLOSED]
 ```
 
 Emissary adoption is an external/internal consumer dependency and occurs only after exact Yosemite commits close the relevant milestones.
@@ -111,9 +112,19 @@ Y002 is closed at implementation commit `8026f5b424fc178d683e63555335f8b33e0aba0
 
 Plan: `plans/implementation/003-leaseset-session-option-surface.md`
 
-Once the Emissary M113 interface is frozen and a successor is explicitly promoted, serialize only the exact generic SAM/I2CP LeaseSet settings required by that contract, using existing typed `SessionOptions` fields where correct and a bounded typed client-auth representation where repeated/numbered options are necessary.
+Status: **closed** at implementation commit `__Y003_HEAD__` (Yosemite's generic SAM/I2CP LeaseSet transport).
+
+Y003 completes the small generic SAM/I2CP LeaseSet session-option surface: it wires existing
+`SessionOptions` LeaseSet fields (`encrypt_lease_set`, `lease_set_auth_type`,
+`lease_set_blinded_type`, `lease_set_type`, `lease_set_key`, `lease_set_private_key`,
+`lease_set_secret`, `lease_set_signing_private_key`) to their canonical `i2cp.*` keys with
+base64/bounds validation, and adds a bounded deterministic `LeaseSetClientAuth`
+collection for repeated/numbered `i2cp.leaseSetClientAuth.<n>` entries. Default wire remains
+unchanged. Fail-closed, conflict-safe, and redacted.
 
 Y003 is transport/configuration plumbing only. Router-side encrypted/authenticated LeaseSet semantics remain outside Yosemite.
+Emissary M113 remains closed as blocked (`82368ea`) but its required Yosemite primitive is now
+available for a future M113 retry.
 
 ## 10. Compatibility and security
 

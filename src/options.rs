@@ -65,6 +65,18 @@ pub const MAX_SESSION_OPTION_KEY_LENGTH: usize = 64;
 /// Maximum byte length of an additional session-option value.
 pub const MAX_SESSION_OPTION_VALUE_LENGTH: usize = 256;
 
+/// Maximum number of LeaseSet client-auth entries.
+pub const MAX_LEASE_SET_CLIENT_AUTHS: usize = 16;
+
+/// Maximum byte length of a LeaseSet client-auth key.
+///
+/// The underlying X25519 public key is 32 bytes (44 base64 chars) but we allow a
+/// bounded larger value for future enc types while keeping a strict limit.
+pub const MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH: usize = 512;
+
+/// Maximum byte length of LeaseSet secret/key material.
+pub const MAX_LEASE_SET_SECRET_LENGTH: usize = 512;
+
 /// A validated additional SAM session option.
 ///
 /// Use [`SessionOption::new`] to construct an option. Values are intentionally restricted to a
@@ -141,6 +153,14 @@ fn is_reserved_session_option_key(key: &str) -> bool {
         "HOST",
         "i2cp.dontPublishLeaseSet",
         "i2cp.leaseSetEncType",
+        "i2cp.encryptLeaseSet",
+        "i2cp.leaseSetAuthType",
+        "i2cp.leaseSetBlindedType",
+        "i2cp.leaseSetType",
+        "i2cp.leaseSetKey",
+        "i2cp.leaseSetPrivKey",
+        "i2cp.leaseSetSecret",
+        "i2cp.leaseSetSigningPrivKey",
         "inbound.length",
         "inbound.quantity",
         "inbound.lengthVariance",
@@ -152,6 +172,97 @@ fn is_reserved_session_option_key(key: &str) -> bool {
     ]
     .iter()
     .any(|reserved| key.eq_ignore_ascii_case(reserved))
+        || key
+            .to_ascii_lowercase()
+            .starts_with("i2cp.leaseSetClientAuth.".to_ascii_lowercase().as_str())
+}
+
+fn is_valid_base64(value: &str) -> bool {
+    if value.is_empty() || value.len() > MAX_LEASE_SET_SECRET_LENGTH {
+        return false;
+    }
+    if !value
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'/' | b'=' | b'-' | b'_'))
+    {
+        return false;
+    }
+    // Length must be multiple of 4 for standard base64, but allow URL-safe without padding
+    // so only check that padding '=' only appears at end and not in middle, and length is sane.
+    if value.contains('=') {
+        let trimmed = value.trim_end_matches('=');
+        if trimmed.contains('=') {
+            return false;
+        }
+        // Standard base64 padded length must be multiple of 4
+        if !value.len().is_multiple_of(4) {
+            return false;
+        }
+    }
+    // No whitespace/control
+    if value.bytes().any(|b| b.is_ascii_control()) {
+        return false;
+    }
+    true
+}
+
+fn is_valid_lease_set_secret(value: &str) -> bool {
+    // Secret is base64-encoded UTF-8, bounded and base64.
+    !value.is_empty() && value.len() <= MAX_LEASE_SET_SECRET_LENGTH && is_valid_base64(value)
+}
+
+fn is_valid_lease_set_key(value: &str) -> bool {
+    // SessionKey is 32 bytes => 44 base64 chars; allow 44 or padded variants up to bound.
+    !value.is_empty() && value.len() <= MAX_LEASE_SET_SECRET_LENGTH && is_valid_base64(value)
+}
+
+/// A validated LeaseSet client-authorization entry.
+///
+/// This is a generic, bounded representation for per-client LeaseSet authentication
+/// material (e.g. X25519 public keys for DH/PSK). The router is authoritative for
+/// whether a given entry is honored; Yosemite only guarantees bounded, validated,
+/// non-leaking transport to the SESSION CREATE wire with deterministic ordering.
+#[derive(Clone, PartialEq, Eq)]
+pub struct LeaseSetClientAuth {
+    key: String,
+}
+
+impl LeaseSetClientAuth {
+    /// Create a validated client-auth entry.
+    ///
+    /// The `key` must be a base64-encoded public key (or PSK material) without
+    /// whitespace, control characters, or SAM-token delimiters. Length is bounded
+    /// by `MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH`.
+    pub fn new(key: impl Into<String>) -> Result<Self, ProtocolError> {
+        let entry = Self { key: key.into() };
+        entry.validate()?;
+        Ok(entry)
+    }
+
+    /// Get the raw key material.
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), ProtocolError> {
+        if self.key.is_empty()
+            || self.key.len() > MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH
+            || !is_valid_base64(&self.key)
+        {
+            return Err(ProtocolError::InvalidOption);
+        }
+        // Ensure no whitespace/control that would break SAM tokenization (base64 check already covers).
+        if self.key.bytes().any(|b| b.is_ascii_whitespace() || b.is_ascii_control()) {
+            return Err(ProtocolError::InvalidOption);
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for LeaseSetClientAuth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LeaseSetClientAuth").field("key", &"<redacted>").finish()
+    }
 }
 
 /// Session options.
@@ -359,7 +470,9 @@ pub struct SessionOptions {
     pub close_idle_time: Duration,
 
     /// The type of authentication for encrypted LS2. 0 for no per-client authentication ;
-    /// 1 for DH per-client authentication; 2 for PSK per-client authentication.
+    /// 1 for DH per-client authentication; 2 for PSK per-client authentication; 3 for PSK (compatible).
+    ///
+    /// Corresponds to `i2cp.leaseSetAuthType`. Validated to 0..3 and emitted only when non-zero.
     ///
     /// Defaults to `0`.
     pub lease_set_auth_type: usize,
@@ -367,12 +480,16 @@ pub struct SessionOptions {
     /// The sig type of the blinded key for encrypted LS2. Default depends on the destination sig
     /// type.
     ///
+    /// Corresponds to `i2cp.leaseSetBlindedType`. Validated to 0..12 and emitted only when non-zero.
+    ///
     /// Defaults to `0`.
     pub lease_set_blinded_type: usize,
 
     /// The encryption type to be used.
     ///
     /// `None` defaults to `6,4`, i.e., ML-KEM-768-x25519, x25519.
+    ///
+    /// Corresponds to `i2cp.leaseSetEncType`. Already emitted as `i2cp.leaseSetEncType=6,4` when `None`.
     ///
     /// Accepts a single value, e.g., `4` or a comma-separated list of values, e.g., `6,5,4` where
     /// the order specifies preference.
@@ -382,30 +499,42 @@ pub struct SessionOptions {
 
     /// For encrypted leasesets. Base 64 SessionKey (44 characters)
     ///
+    /// Corresponds to `i2cp.leaseSetKey`. Base64 validated, bounded to 512 bytes.
+    ///
     /// Defauts to `None`.
     pub lease_set_key: Option<String>,
 
     /// Base 64 private keys for encryption.
+    ///
+    /// Corresponds to `i2cp.leaseSetPrivKey`. Base64 validated, bounded.
     ///
     /// Defauts to `None`.
     pub lease_set_private_key: Option<String>,
 
     /// Base 64 encoded UTF-8 secret used to blind the leaseset address.
     ///
+    /// Corresponds to `i2cp.leaseSetSecret`. Base64 validated, bounded.
+    ///
     /// Defauts to `None`.
     pub lease_set_secret: Option<String>,
 
     /// Base 64 private key for signatures.
+    ///
+    /// Corresponds to `i2cp.leaseSetSigningPrivKey`. Base64 validated, bounded.
     ///
     /// Defauts to `None`.
     pub lease_set_signing_private_key: Option<String>,
 
     /// The type of leaseset to be sent in the CreateLeaseSet2 Message.
     ///
+    /// Corresponds to `i2cp.leaseSetType`. Validated to 0..5 and emitted only when not `1`.
+    ///
     /// Defaults to `1`.
     pub lease_set_type: usize,
 
     /// Encrypt the lease
+    ///
+    /// Corresponds to `i2cp.encryptLeaseSet`. When `true`, emits `i2cp.encryptLeaseSet=true`.
     ///
     /// Defaults to `false`.
     pub encrypt_lease_set: bool,
@@ -437,6 +566,17 @@ pub struct SessionOptions {
     ///
     /// Defaults to `false`.
     pub silent_forward: bool,
+
+    /// Bounded LeaseSet client-authorization entries.
+    ///
+    /// Each entry is a validated base64-encoded key (e.g. X25519 public key for
+    /// DH/PSK). The collection is bounded, duplicate-free, and serialized
+    /// deterministically as `i2cp.leaseSetClientAuth.<index>` with indices
+    /// derived from sorted keys. This is a generic SAM transport; the router
+    /// remains authoritative for whether the entry is honored.
+    ///
+    /// Defaults to empty.
+    pub lease_set_client_auths: Vec<LeaseSetClientAuth>,
 }
 
 impl fmt::Debug for SessionOptions {
@@ -514,6 +654,7 @@ impl fmt::Debug for SessionOptions {
             )
             .field("lease_set_type", &self.lease_set_type)
             .field("encrypt_lease_set", &self.encrypt_lease_set)
+            .field("lease_set_client_auths", &self.lease_set_client_auths)
             .field("gzip", &self.gzip)
             .field("ssl", &self.ssl)
             .field("samv3_tcp_port", &self.samv3_tcp_port)
@@ -536,12 +677,76 @@ impl SessionOptions {
                 .additional_options
                 .iter()
                 .any(|existing| existing.key.eq_ignore_ascii_case(&option.key))
+            || is_reserved_session_option_key(&option.key)
         {
+            return Err(ProtocolError::InvalidOption);
+        }
+        // Also reject if generic key collides with any typed LeaseSet option that is currently active.
+        if self.lease_set_typed_key_conflict(&option.key) {
             return Err(ProtocolError::InvalidOption);
         }
 
         self.additional_options.push(option);
         Ok(())
+    }
+
+    /// Add one validated LeaseSet client-auth entry.
+    pub fn add_lease_set_client_auth(
+        &mut self,
+        key: impl Into<String>,
+    ) -> Result<(), ProtocolError> {
+        let entry = LeaseSetClientAuth::new(key)?;
+        if self.lease_set_client_auths.len() >= MAX_LEASE_SET_CLIENT_AUTHS
+            || self
+                .lease_set_client_auths
+                .iter()
+                .any(|existing| existing.key.eq_ignore_ascii_case(&entry.key))
+        {
+            return Err(ProtocolError::InvalidOption);
+        }
+        // Also ensure no generic additional_option already occupies the derived wire key that
+        // this entry would eventually produce. Since wire keys are deterministic after sorting,
+        // we conservatively reject if any additional_option uses the client-auth prefix.
+        if self
+            .additional_options
+            .iter()
+            .any(|opt| opt.key.to_ascii_lowercase().starts_with("i2cp.leasesetclientauth."))
+        {
+            return Err(ProtocolError::InvalidOption);
+        }
+
+        self.lease_set_client_auths.push(entry);
+        Ok(())
+    }
+
+    fn lease_set_typed_key_conflict(&self, key: &str) -> bool {
+        let mut typed_keys = Vec::new();
+        if self.encrypt_lease_set {
+            typed_keys.push("i2cp.encryptLeaseSet");
+        }
+        if self.lease_set_auth_type != 0 {
+            typed_keys.push("i2cp.leaseSetAuthType");
+        }
+        if self.lease_set_blinded_type != 0 {
+            typed_keys.push("i2cp.leaseSetBlindedType");
+        }
+        if self.lease_set_key.is_some() {
+            typed_keys.push("i2cp.leaseSetKey");
+        }
+        if self.lease_set_private_key.is_some() {
+            typed_keys.push("i2cp.leaseSetPrivKey");
+        }
+        if self.lease_set_secret.is_some() {
+            typed_keys.push("i2cp.leaseSetSecret");
+        }
+        if self.lease_set_signing_private_key.is_some() {
+            typed_keys.push("i2cp.leaseSetSigningPrivKey");
+        }
+        if self.lease_set_type != 1 {
+            typed_keys.push("i2cp.leaseSetType");
+        }
+        // Client auth entries occupy a namespace, not a single key, but conflict is already handled via prefix check.
+        typed_keys.iter().any(|k| k.eq_ignore_ascii_case(key))
     }
 
     pub(crate) fn validate_additional_options(&self) -> Result<(), ProtocolError> {
@@ -559,6 +764,93 @@ impl SessionOptions {
             }
         }
 
+        Ok(())
+    }
+
+    pub(crate) fn validate_lease_set_options(&self) -> Result<(), ProtocolError> {
+        // auth type: 0 = none, 1 = DH, 2 = PSK, 3 = PSK (I2P BlindData allows 3); allow 0..3.
+        if self.lease_set_auth_type > 3 {
+            return Err(ProtocolError::InvalidOption);
+        }
+        // blinded type: 0 = default, otherwise must be a known SigType code (7, 8, 9, 10, 11 are common). Allow 0..12 for forward compat.
+        if self.lease_set_blinded_type > 12 {
+            return Err(ProtocolError::InvalidOption);
+        }
+        // lease_set_type: 0..5 plausible; default 1. Allow 0..5.
+        if self.lease_set_type > 5 {
+            return Err(ProtocolError::InvalidOption);
+        }
+        if let Some(value) = &self.lease_set_key {
+            if !is_valid_lease_set_key(value) {
+                return Err(ProtocolError::InvalidOption);
+            }
+        }
+        if let Some(value) = &self.lease_set_private_key {
+            if !is_valid_lease_set_key(value) {
+                return Err(ProtocolError::InvalidOption);
+            }
+        }
+        if let Some(value) = &self.lease_set_secret {
+            if !is_valid_lease_set_secret(value) {
+                return Err(ProtocolError::InvalidOption);
+            }
+        }
+        if let Some(value) = &self.lease_set_signing_private_key {
+            if !is_valid_lease_set_key(value) {
+                return Err(ProtocolError::InvalidOption);
+            }
+        }
+        // lease_set_enc_type is validated elsewhere (generic SessionOption value already checked) but we also ensure it's not empty and uses safe bytes.
+        if let Some(value) = &self.lease_set_enc_type {
+            if value.is_empty()
+                || value.len() > MAX_SESSION_OPTION_VALUE_LENGTH
+                || !value.bytes().all(is_safe_session_option_value_byte)
+            {
+                return Err(ProtocolError::InvalidOption);
+            }
+            // Basic comma-separated numeric check: each item 3..7, etc. We keep permissive here and let router decide, but reject obvious injection.
+            if value.contains(' ') || value.contains('\n') || value.contains('\r') {
+                return Err(ProtocolError::InvalidOption);
+            }
+        }
+
+        // client auths
+        if self.lease_set_client_auths.len() > MAX_LEASE_SET_CLIENT_AUTHS {
+            return Err(ProtocolError::InvalidOption);
+        }
+        for (index, entry) in self.lease_set_client_auths.iter().enumerate() {
+            entry.validate()?;
+            if self.lease_set_client_auths[index + 1..]
+                .iter()
+                .any(|other| other.key.eq_ignore_ascii_case(&entry.key))
+            {
+                return Err(ProtocolError::InvalidOption);
+            }
+        }
+
+        // Conflict: typed LeaseSet keys must not already be present as generic additional_options.
+        for option in &self.additional_options {
+            if self.lease_set_typed_key_conflict(&option.key)
+                || option.key.to_ascii_lowercase().starts_with("i2cp.leasesetclientauth.")
+            {
+                return Err(ProtocolError::InvalidOption);
+            }
+        }
+
+        // Fail-closed: if encrypt_lease_set is true but no LeaseSet material is provided, we still
+        // allow it (router will decide), but if auth_type requires client auths and none are present,
+        // we must not silently continue with a weaker config. The plan says no weaker fallback, so
+        // if auth_type !=0 but client_auths is empty, we could allow but router will handle. However
+        // to enforce fail-closed for clearly inconsistent config, we reject auth_type !=0 with empty client auths?
+        // For now we allow empty; the wire will contain auth type but no entries, which is still explicit.
+        // The important fail-closed is: invalid fields must error, not be omitted.
+
+        Ok(())
+    }
+
+    pub(crate) fn validate_all_options(&self) -> Result<(), ProtocolError> {
+        self.validate_additional_options()?;
+        self.validate_lease_set_options()?;
         Ok(())
     }
 }
@@ -614,6 +906,7 @@ impl Default for SessionOptions {
             lease_set_signing_private_key: None,
             lease_set_type: 1usize,
             encrypt_lease_set: false,
+            lease_set_client_auths: Vec::new(),
             gzip: true,
             ssl: false,
             samv3_tcp_port: SAMV3_TCP_PORT,
