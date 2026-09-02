@@ -43,6 +43,68 @@ impl Default for RouterApi {
     }
 }
 
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    #[test]
+    fn public_sync_api_passes_selected_signature_type_to_router() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut command = String::new();
+
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command, "HELLO VERSION\n");
+            stream.write_all(b"HELLO REPLY RESULT=OK VERSION=3.3\n").unwrap();
+
+            command.clear();
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command, "DEST GENERATE SIGNATURE_TYPE=11\n");
+            stream.write_all(b"DEST REPLY PUB=destination PRIV=private\n").unwrap();
+        });
+
+        let generated = RouterApi::new(port).generate_destination_with_signature_type(11).unwrap();
+
+        assert_eq!(
+            generated,
+            ("destination".to_string(), "private".to_string())
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn public_sync_default_api_requests_ed25519() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut command = String::new();
+
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command, "HELLO VERSION\n");
+            stream.write_all(b"HELLO REPLY RESULT=OK VERSION=3.3\n").unwrap();
+
+            command.clear();
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command, "DEST GENERATE SIGNATURE_TYPE=7\n");
+            stream.write_all(b"DEST REPLY PUB=destination PRIV=private\n").unwrap();
+        });
+
+        RouterApi::new(port).generate_destination().unwrap();
+        server.join().unwrap();
+    }
+}
+
 impl RouterApi {
     /// Create new [`RouterApi`] and connect router over `port`.
     ///
@@ -118,6 +180,29 @@ impl RouterApi {
     /// }
     /// ```
     pub fn generate_destination(&self) -> crate::Result<(String, String)> {
+        self.generate_destination_with_command(|controller| controller.generate_destination())
+    }
+
+    /// Generate a destination using the requested SAM signature type.
+    ///
+    /// The signature type is passed directly to the router. Router support and validity are
+    /// reported through the returned result; this method does not retry with the default type.
+    pub fn generate_destination_with_signature_type(
+        &self,
+        signature_type: u16,
+    ) -> crate::Result<(String, String)> {
+        self.generate_destination_with_command(|controller| {
+            controller.generate_destination_with_signature_type(signature_type)
+        })
+    }
+
+    fn generate_destination_with_command<F>(
+        &self,
+        generate_command: F,
+    ) -> crate::Result<(String, String)>
+    where
+        F: FnOnce(&mut RouterApiController) -> Result<Vec<u8>, crate::ProtocolError>,
+    {
         let mut controller = RouterApiController::new();
         let mut stream = TcpStream::connect(format!("127.0.0.1:{}", self.port))?;
 
@@ -130,7 +215,7 @@ impl RouterApi {
         controller.handle_response(&response)?;
 
         // generate destination
-        let command = controller.generate_destination()?;
+        let command = generate_command(&mut controller)?;
         stream.write_all(&command)?;
 
         // read destination generation response

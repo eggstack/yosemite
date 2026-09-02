@@ -91,6 +91,12 @@ pub enum Response {
         /// the signing private key.
         private_key: String,
     },
+
+    /// Error received while generating a destination.
+    DestinationGenerationError {
+        /// Router error.
+        error: I2pError,
+    },
 }
 
 impl<'a> TryFrom<ParsedCommand<'a>> for Response {
@@ -167,13 +173,23 @@ impl<'a> TryFrom<ParsedCommand<'a>> for Response {
                 None => return Err(()),
             },
             ("DEST", Some("REPLY")) => {
-                let destination = parsed_cmd.key_value_pairs.get("PUB").ok_or(())?.to_string();
-                let private_key = parsed_cmd.key_value_pairs.get("PRIV").ok_or(())?.to_string();
+                match (
+                    parsed_cmd.key_value_pairs.get("PUB"),
+                    parsed_cmd.key_value_pairs.get("PRIV"),
+                ) {
+                    (Some(destination), Some(private_key)) => Ok(Response::DestinationGeneration {
+                        destination: destination.to_string(),
+                        private_key: private_key.to_string(),
+                    }),
+                    _ => {
+                        let result = parsed_cmd.key_value_pairs.get("RESULT").ok_or(())?;
+                        let message = parsed_cmd.key_value_pairs.get("MESSAGE");
 
-                Ok(Response::DestinationGeneration {
-                    destination,
-                    private_key,
-                })
+                        Ok(Response::DestinationGenerationError {
+                            error: I2pError::try_from((*result, message.copied()))?,
+                        })
+                    }
+                }
             }
             _ => todo!(),
         }
@@ -359,6 +375,16 @@ mod tests {
 
             assert!(Response::parse(&response).is_none());
         }
+    }
+
+    #[test]
+    fn dest_generate_error() {
+        assert!(matches!(
+            Response::parse("DEST REPLY RESULT=INVALID_KEY\n"),
+            Some(Response::DestinationGenerationError {
+                error: I2pError::InvalidKey
+            })
+        ));
     }
 
     #[test]

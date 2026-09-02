@@ -46,6 +46,97 @@ impl Default for RouterApi {
     }
 }
 
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod tests {
+    use super::*;
+    use std::{
+        io::{BufRead, BufReader, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    fn mock_router(expected_signature_type: u16) -> (u16, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut command = String::new();
+
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(command, "HELLO VERSION\n");
+            stream
+                .try_clone()
+                .unwrap()
+                .write_all(b"HELLO REPLY RESULT=OK VERSION=3.3\n")
+                .unwrap();
+
+            command.clear();
+            reader.read_line(&mut command).unwrap();
+            assert_eq!(
+                command,
+                format!("DEST GENERATE SIGNATURE_TYPE={expected_signature_type}\n")
+            );
+            stream
+                .try_clone()
+                .unwrap()
+                .write_all(b"DEST REPLY PUB=destination PRIV=private\n")
+                .unwrap();
+        });
+
+        (port, server)
+    }
+
+    #[cfg(feature = "tokio")]
+    #[tokio::test]
+    async fn public_async_api_passes_selected_signature_type_to_router() {
+        let (port, server) = mock_router(11);
+        let generated =
+            RouterApi::new(port).generate_destination_with_signature_type(11).await.unwrap();
+
+        assert_eq!(
+            generated,
+            ("destination".to_string(), "private".to_string())
+        );
+        server.join().unwrap();
+    }
+
+    #[cfg(feature = "tokio")]
+    #[tokio::test]
+    async fn public_async_default_api_requests_ed25519() {
+        let (port, server) = mock_router(7);
+        RouterApi::new(port).generate_destination().await.unwrap();
+        server.join().unwrap();
+    }
+
+    #[cfg(feature = "smol")]
+    #[test]
+    fn public_smol_api_passes_selected_signature_type_to_router() {
+        smol::block_on(async {
+            let (port, server) = mock_router(11);
+            let generated =
+                RouterApi::new(port).generate_destination_with_signature_type(11).await.unwrap();
+
+            assert_eq!(
+                generated,
+                ("destination".to_string(), "private".to_string())
+            );
+            server.join().unwrap();
+        });
+    }
+
+    #[cfg(feature = "smol")]
+    #[test]
+    fn public_smol_default_api_requests_ed25519() {
+        smol::block_on(async {
+            let (port, server) = mock_router(7);
+            RouterApi::new(port).generate_destination().await.unwrap();
+            server.join().unwrap();
+        });
+    }
+}
+
 impl RouterApi {
     /// Create new [`RouterApi`] and connect router over `port`.
     ///
@@ -124,6 +215,31 @@ impl RouterApi {
     /// }
     /// ```
     pub async fn generate_destination(&self) -> crate::Result<(String, String)> {
+        self.generate_destination_with_command(|controller| controller.generate_destination())
+            .await
+    }
+
+    /// Generate a destination using the requested SAM signature type.
+    ///
+    /// The signature type is passed directly to the router. Router support and validity are
+    /// reported through the returned result; this method does not retry with the default type.
+    pub async fn generate_destination_with_signature_type(
+        &self,
+        signature_type: u16,
+    ) -> crate::Result<(String, String)> {
+        self.generate_destination_with_command(|controller| {
+            controller.generate_destination_with_signature_type(signature_type)
+        })
+        .await
+    }
+
+    async fn generate_destination_with_command<F>(
+        &self,
+        generate_command: F,
+    ) -> crate::Result<(String, String)>
+    where
+        F: FnOnce(&mut RouterApiController) -> Result<Vec<u8>, crate::ProtocolError>,
+    {
         let mut controller = RouterApiController::new();
         let mut stream = TcpStream::connect(format!("127.0.0.1:{}", self.port)).await?;
 
@@ -136,7 +252,7 @@ impl RouterApi {
         controller.handle_response(&response)?;
 
         // generate destination
-        let command = controller.generate_destination()?;
+        let command = generate_command(&mut controller)?;
         stream.write_all(&command).await?;
 
         // read destination generation response

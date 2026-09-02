@@ -130,15 +130,24 @@ impl RouterApiController {
 
     /// Lookup destination associated with `name`.
     pub fn generate_destination(&mut self) -> Result<Vec<u8>, ProtocolError> {
+        self.generate_destination_with_signature_type(7)
+    }
+
+    /// Generate a destination using `signature_type`.
+    pub fn generate_destination_with_signature_type(
+        &mut self,
+        signature_type: u16,
+    ) -> Result<Vec<u8>, ProtocolError> {
         match std::mem::replace(&mut self.state, RouterApiControllerState::Poisoned) {
             RouterApiControllerState::Handshaked => {
                 tracing::info!(
                     target: LOG_TARGET,
+                    %signature_type,
                     "generate destination",
                 );
                 self.state = RouterApiControllerState::AwaitingDestinationResponse;
 
-                Ok(format!("DEST GENERATE SIGNATURE_TYPE=7\n").into_bytes())
+                Ok(format!("DEST GENERATE SIGNATURE_TYPE={signature_type}\n").into_bytes())
             }
             state => {
                 tracing::warn!(
@@ -237,6 +246,9 @@ impl RouterApiController {
                         };
                         Ok(())
                     }
+                    Some(Response::DestinationGenerationError { error }) => {
+                        Err(ProtocolError::Router(error))
+                    }
                     None => {
                         tracing::warn!(
                             target: LOG_TARGET,
@@ -284,5 +296,59 @@ impl RouterApiController {
             } => (destination, private_key),
             _ => panic!("invalid state"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::I2pError;
+
+    fn handshaked_controller() -> RouterApiController {
+        let mut controller = RouterApiController::new();
+        assert_eq!(
+            controller.handshake_router_api(),
+            Ok(b"HELLO VERSION\n".to_vec())
+        );
+        controller.handle_response("HELLO REPLY RESULT=OK VERSION=3.3\n").unwrap();
+        controller
+    }
+
+    #[test]
+    fn generate_destination_defaults_to_ed25519() {
+        let mut controller = handshaked_controller();
+
+        assert_eq!(
+            controller.generate_destination().unwrap(),
+            b"DEST GENERATE SIGNATURE_TYPE=7\n"
+        );
+    }
+
+    #[test]
+    fn generate_destination_serializes_selected_signature_type_once() {
+        let mut controller = handshaked_controller();
+
+        let command = controller.generate_destination_with_signature_type(11).unwrap();
+
+        assert_eq!(command, b"DEST GENERATE SIGNATURE_TYPE=11\n");
+        assert_eq!(
+            String::from_utf8(command).unwrap().matches("SIGNATURE_TYPE=").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn router_error_is_propagated_without_signature_fallback() {
+        let mut controller = handshaked_controller();
+        controller.generate_destination_with_signature_type(11).unwrap();
+
+        assert_eq!(
+            controller.handle_response("DEST REPLY RESULT=INVALID_KEY\n"),
+            Err(ProtocolError::Router(I2pError::InvalidKey))
+        );
+        assert!(matches!(
+            &controller.state,
+            RouterApiControllerState::Poisoned
+        ));
     }
 }
