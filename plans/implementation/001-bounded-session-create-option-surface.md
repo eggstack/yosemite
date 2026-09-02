@@ -1,6 +1,8 @@
 # Y001 — Bounded SESSION CREATE Option Surface
 
-Status: **ready**
+Status: **closed**
+
+Closure record: `plans/closure/001-bounded-session-create-option-surface.md`
 
 Class: capability / protocol serialization / security containment
 

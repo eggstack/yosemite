@@ -23,7 +23,7 @@ Initial fork baseline:
 - **closing** — implementation landed and closure evidence is being gathered;
 - **closed** — closure accepted.
 
-## Current source evidence
+## Initial fork source evidence
 
 At the baseline:
 
@@ -36,10 +36,10 @@ At the baseline:
 ## Dependency graph
 
 ```text
-Y001 bounded SESSION CREATE option surface          [READY]
+Y001 bounded SESSION CREATE option surface          [CLOSED]
   |
   v
-Y002 signature-aware DEST GENERATE API              [PROPOSED / BLOCKED ON Y001]
+Y002 signature-aware DEST GENERATE API              [READY]
   |
   +--------------------------+
   |                          |
@@ -50,17 +50,29 @@ Emissary M117 adoption       Y003 LeaseSet option surface
 
 Y003 additionally depends on the consuming Emissary M113 semantic/client-auth contract being frozen so Yosemite does not invent consumer policy.
 
-## Current handoff — Y001
+## Recently closed — Y001
 
 Plan:
 
 - `plans/implementation/001-bounded-session-create-option-surface.md`
 
+Status: **closed** at commit `beafafa33e563760a0484df1b5fcaec4e0f8c5e4`.
+
+Closure:
+
+- `plans/closure/001-bounded-session-create-option-surface.md`
+
+## Current handoff — Y002
+
+Plan:
+
+- `plans/implementation/002-signature-aware-destination-generation.md`
+
 Status: **ready**.
 
-Objective: extend Yosemite's existing `SESSION CREATE` serializer generically so the current typed `signature_type`, tunnel variance and backup-quantity fields are honored, and add one bounded injection-safe additional-option surface with deterministic conflict behavior.
+Objective: add a generic signature-type-aware `DEST GENERATE` path for both async and sync Router APIs while preserving the default method.
 
-No Emissary/I2PControl concepts, dependency additions, TLS behavior, LeaseSet crypto implementation, upstream interaction, or release work are authorized.
+Y001 closure makes the signature representation/validation dependency ready. No Emissary/I2PControl concepts, dependency additions, TLS behavior, LeaseSet crypto implementation, upstream interaction, or release work are authorized.
 
 ## Roadmap-defined future plans
 
@@ -68,7 +80,7 @@ No Emissary/I2PControl concepts, dependency additions, TLS behavior, LeaseSet cr
 
 `plans/implementation/002-signature-aware-destination-generation.md`
 
-Proposed/blocked on Y001 closure. Preserve `generate_destination()` as the Ed25519/default compatibility path and add a generic signature-type-aware path for both async and sync Router APIs.
+Ready at the closed Y001 implementation commit. Preserve `generate_destination()` as the Ed25519/default compatibility path and add a generic signature-type-aware path for both async and sync Router APIs.
 
 ### Y003
 
@@ -78,8 +90,8 @@ Proposed/blocked. Serialize only reference-proven generic LeaseSet/I2CP session 
 
 ## Registry rules
 
-1. Y001 is the sole dependency-ready Yosemite handoff.
-2. Y002 MUST NOT execute until Y001 closes and its option/validation types are stable.
+1. Y002 is the sole dependency-ready Yosemite handoff.
+2. Y002 is ready because Y001 closed and its option/validation types are stable.
 3. Y003 MUST NOT execute from this registry until the consuming contract is frozen and it is explicitly promoted.
 4. Default Yosemite behavior must remain compatible for callers that do not set new options.
 5. All work is internal-only; no upstream PR/issue/review/release/contact is authorized.

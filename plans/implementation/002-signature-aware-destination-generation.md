@@ -1,10 +1,10 @@
 # Y002 — Signature-Aware Destination Generation
 
-Status: **proposed / blocked on Y001 closure**
+Status: **ready**
 
 Class: capability / public API / protocol serialization
 
-Baseline: to be frozen at the closed Y001 head.
+Baseline: `beafafa33e563760a0484df1b5fcaec4e0f8c5e4`
 
 Source roadmap:
 
@@ -18,7 +18,7 @@ Both asynchronous and synchronous Router APIs must expose equivalent semantics a
 
 ## 2. Readiness
 
-Y002 becomes ready only after Y001 closes so signature-type representation/validation is stable and duplicated validation policy is avoided.
+Y001 is closed at the baseline above, so signature-type representation/validation is stable and duplicated validation policy can be avoided.
 
 ## 3. Current evidence
 
