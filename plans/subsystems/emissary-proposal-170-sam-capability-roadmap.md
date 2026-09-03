@@ -1,6 +1,6 @@
 # Emissary Proposal 170 — Yosemite SAM Capability Roadmap
 
-Status: active; Y001/Y002/Y003 closed
+Status: active; Y001/Y002 closed, Y003 historical closure requires Y004 corrective
 
 Baseline: `d0fe71da214b212790773be12a93162ae71f3e03` (Yosemite 0.7.0)
 
@@ -33,13 +33,16 @@ Yosemite MUST NOT import Emissary concepts or contain Proposal-specific switches
 
 ## 3. Current state
 
-`SessionOptions` already contains several fields needed by the consumer, including `signature_type`, `inbound_len_variance`, `outbound_len_variance`, `inbound_backup_quantity`, and `outbound_backup_quantity`.
+Y001 and Y002 established a bounded generic session-option surface, truthful variance/backup/signature serialization, and signature-aware destination generation. Current Emissary pins Y002 implementation `8026f5b424fc178d683e63555335f8b33e0aba04` through its I2PControl-only package alias.
 
-However, `SessionController::create_session()` currently emits only publication, LeaseSet encryption type, base tunnel lengths/quantities, then hardcodes `SIGNATURE_TYPE=7`. Therefore changing the existing typed fields does not currently alter the `SESSION CREATE` wire for variance/backups/signature type.
+Y003 subsequently attempted to add generic LeaseSet session-option transport. A later independent audit found that the Y003 closure verified its own command strings but did not independently freeze every emitted property against the I2CP/Java reference vocabulary. Material issues include:
 
-`RouterApiController::generate_destination()` separately hardcodes `SIGNATURE_TYPE=7`, so a non-default destination signature type cannot be requested through the public Router API.
+- persistent LeaseSet encryption/signing private-key fields emitted with shortened property names that have different or non-canonical semantics;
+- per-client authorization emitted under `i2cp.leaseSetClientAuth.<n>` rather than the reference mode-specific DH/PSK namespaces;
+- a client-auth value type that cannot represent the reference client-name/key pair without a raw token;
+- speculative numeric bounds for authentication, blinded signature type, and LeaseSet type.
 
-The controller already serializes a style-owned `SessionParameters.options` collection, but that is not a stable public generic consumer surface for arbitrary validated session options and currently uses direct formatting. The Proposal consumer needs a bounded public mechanism without bypassing typed policy.
+Because Emissary remains pinned to Y002, this defective Y003 surface is not currently in the Emissary dependency graph. Y004 is the corrective owner.
 
 ## 4. Invariants
 
@@ -77,69 +80,95 @@ Y001 SESSION CREATE option surface        [CLOSED]
 Y002 signature-aware DEST GENERATE        [CLOSED]
   |
   v
-Y003 LeaseSet option surface              [CLOSED]
+Y003 LeaseSet option surface              [HISTORICAL CLOSED; CORRECTIVE REQUIRED]
+  |
+  v
+Y004 LeaseSet wire semantics corrective   [READY]
+  |
+  v
+Emissary corrected pin / LeaseSet retry   [EXTERNAL; BLOCKED ON Y004]
 ```
 
-Emissary adoption is an external/internal consumer dependency and occurs only after exact Yosemite commits close the relevant milestones.
+Emissary adoption is an external/internal consumer dependency and occurs only after exact Yosemite implementation commits close the relevant milestones.
 
 ## 7. Y001 — bounded SESSION CREATE option surface
 
 Plan: `plans/implementation/001-bounded-session-create-option-surface.md`
 
-Target capabilities:
+Status: **closed** at implementation commit `beafafa33e563760a0484df1b5fcaec4e0f8c5e4`.
+
+Capabilities:
 
 - serialize `SessionOptions.signature_type` rather than hardcoding 7;
 - serialize inbound/outbound length variance;
 - serialize inbound/outbound backup quantity;
 - expose one generic bounded additional-session-option collection suitable for valid I2CP/session options not represented by typed fields;
 - reject reserved/typed conflicts and malformed/injection-capable tokens;
-- make serialization deterministic enough for direct protocol regression tests;
-- redact secret-bearing/additional option values from ordinary debug output.
+- deterministic serialization and secret redaction.
 
-Y001 does not claim that any router honors these values; it guarantees only Yosemite API-to-wire behavior.
+Y001 guarantees API-to-wire behavior only; router support remains the consumer/router owner's responsibility.
 
 ## 8. Y002 — signature-aware destination generation
 
 Plan: `plans/implementation/002-signature-aware-destination-generation.md`
 
-Add an explicitly typed/parameterized public destination-generation path that serializes the requested SAM `SIGNATURE_TYPE`, while preserving the current parameterless API as the compatibility/default Ed25519 path. Async and sync APIs must match.
+Status: **closed** at implementation commit `8026f5b424fc178d683e63555335f8b33e0aba04`.
 
-Y002 does not add signing algorithms to routers and does not decide which signature types Emissary supports.
+Y002 adds an explicitly signature-aware public destination-generation path while preserving the parameterless/default Ed25519 path. Async and sync APIs remain aligned.
 
-Y002 is closed at implementation commit `8026f5b424fc178d683e63555335f8b33e0aba04`; Emissary M117 may pin this exact internal revision.
+This is the current Emissary I2PControl pin and remains the accepted dependency until Y004 closes and a later Emissary plan explicitly advances the revision.
 
-## 9. Y003 — LeaseSet session-option surface
+## 9. Y003 — historical LeaseSet session-option surface
 
 Plan: `plans/implementation/003-leaseset-session-option-surface.md`
 
-Status: **closed** at implementation commit `9ac7d9a0ac2a8d526e363f150466b579b017e116` (Yosemite's generic SAM/I2CP LeaseSet transport).
+Closure: `plans/closure/003-leaseset-session-option-surface.md`
 
-Y003 completes the small generic SAM/I2CP LeaseSet session-option surface: it wires existing
-`SessionOptions` LeaseSet fields (`encrypt_lease_set`, `lease_set_auth_type`,
-`lease_set_blinded_type`, `lease_set_type`, `lease_set_key`, `lease_set_private_key`,
-`lease_set_secret`, `lease_set_signing_private_key`) to their canonical `i2cp.*` keys with
-base64/bounds validation, and adds a bounded deterministic `LeaseSetClientAuth`
-collection for repeated/numbered `i2cp.leaseSetClientAuth.<n>` entries. Default wire remains
-unchanged. Fail-closed, conflict-safe, and redacted.
+Historical implementation: `9ac7d9a0ac2a8d526e363f150466b579b017e116`.
 
-Y003 is transport/configuration plumbing only. Router-side encrypted/authenticated LeaseSet semantics remain outside Yosemite.
-Emissary M113 remains closed as blocked (`82368ea`) but its required Yosemite primitive is now
-available for a future M113 retry.
+Y003 remains a historical record of the first LeaseSet transport attempt. Its default-wire, redaction, boundedness, and fail-before-command intent remain useful evidence, but its canonical LeaseSet wire-semantic claims are not accepted for consumer adoption after the post-closure audit.
 
-## 10. Compatibility and security
+Do not rewrite Y003 history and do not pin Emissary to Y003.
 
-The public default for signature type remains 7. Existing callers that construct `SessionOptions::default()` must observe the same session wire except for ordering changes that are semantically neutral and covered by tests.
+## 10. Y004 — Y003 LeaseSet wire semantics corrective
 
-Generic options must have strict grammar/count/size limits, deterministic ordering, and reserved-key conflict rejection. They may not override `STYLE`, `ID`, `DESTINATION`, `SIGNATURE_TYPE`, datagram framing fields, or any typed option emitted by Yosemite.
+Plan: `plans/implementation/004-y003-leaseset-wire-semantics-corrective.md`
 
-If a future required value cannot be represented safely by the generic token grammar, the consumer must remain blocked until a typed Yosemite API is planned; relaxing framing validation is not an escape hatch.
+Status: **ready**.
 
-## 11. Verification strategy
+Y004 must independently re-freeze the exact Java/I2CP vocabulary and correct:
 
-Prefer controller-level byte-for-byte command tests plus existing sync/async session tests. Each wire field must be exercised through the actual controller path, including negative injection/conflict cases.
+- persistent LeaseSet encryption/signing private-key property names and the semantic distinction from `i2cp.leaseSetPrivKey`;
+- mode-aware DH/PSK client-auth keys and values;
+- auth/blinded-type/LeaseSet-type numeric domains;
+- typed/generic reserved namespaces and conflict behavior;
+- tests so expected protocol fixtures are independent from the implementation's own constants.
+
+Y004 preserves Y001/Y002 behavior, bounded validation, redaction, deterministic ordering, and default compatibility. It still performs no LeaseSet cryptography and makes no claim that a connected router honors the supplied configuration.
+
+## 11. Compatibility and security
+
+The public default for signature type remains 7. Existing callers that do not configure new LeaseSet security options must observe the same semantic session wire.
+
+Generic options retain strict grammar/count/size limits, deterministic ordering, and reserved-key conflict rejection. They may not override structural fields or a canonical typed option emitted by Yosemite.
+
+Correct protocol spelling takes precedence over preserving Y003's defective wire representation. Source compatibility may be retained through additive/deprecated typed wrappers only where that does not preserve non-canonical semantics.
+
+If a future required value cannot be represented safely by the generic token grammar, the consumer remains blocked until a typed Yosemite API is planned; relaxing framing validation is not an escape hatch.
+
+## 12. Verification strategy
+
+Prefer controller-level byte-for-byte command tests plus existing sync/async session tests. Y004 must add independent protocol fixtures whose expected keys are frozen from external read-only reference evidence, specifically covering DH/PSK client-auth and the private-key property distinctions.
 
 No new hosted test system is required.
 
-## 12. Exit condition
+## 13. Exit condition
 
-This roadmap is complete when every Yosemite capability required by the accepted Emissary Proposal 170 dependency boundary has a closed milestone and Emissary is pinned to exact internal fork revisions without any Proposal-specific code in Yosemite.
+This roadmap is complete when:
+
+1. Y004 closes with canonical, independently verified LeaseSet transport;
+2. no high/medium Yosemite protocol/security corrective remains open for the capabilities required by Emissary;
+3. Emissary consumes only exact reviewed internal fork revisions through its accepted I2PControl-only dependency boundary;
+4. no Proposal-specific policy enters Yosemite.
+
+All external/upstream sources remain read-only. No upstream PR, issue, review, release, submission, adoption request, or maintainer contact is part of this roadmap.
