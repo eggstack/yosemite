@@ -21,7 +21,7 @@ Initial fork baseline:
 - Y003 is historical; its LeaseSet wire-semantic claims were superseded by Y004.
 - Y004 is closed at `c2db73dba35dd9392947af5c74df29b0b556775f` and is the exact revision currently consumed by Emissary M122.
 - Post-Y004 review found a remaining cross-field correctness defect: typed `lease_set_auth_type` and DH/PSK client-auth entries can be serialized in combinations the Java reference does not consume under the selected auth branch.
-- Y005 is the corrective owner.
+- Y005 is closed at `59140a2277bf296928d2e8ce39a148182eeff044`; it is the corrected implementation revision for future consumer review.
 
 ## Dependency graph
 
@@ -38,19 +38,19 @@ Y003 LeaseSet option attempt                         [HISTORICAL]
 Y004 canonical LeaseSet wire corrective              [CLOSED / CONSUMED BY EMISSARY]
   |
   v
-Y005 auth-mode/type cross-field consistency          [READY]
+Y005 auth-mode/type cross-field consistency          [CLOSED]
   |
   v
-future Emissary exact-revision adoption              [EXTERNAL / BLOCKED ON Y005 CLOSURE]
+future Emissary exact-revision adoption              [EXTERNAL / UNBLOCKED; SEPARATE CONSUMER REVIEW]
 ```
 
-## Current handoff — Y005
+## Current handoff — future Emissary review
 
 Plan:
 
 - `plans/implementation/005-y004-leaseset-auth-mode-consistency-corrective.md`
 
-Status: **ready**.
+Status: **Y005 closed; external consumer work may proceed through a separate review**.
 
 Baseline:
 
@@ -69,7 +69,7 @@ Authorized production scope is limited to:
 - `src/proto/session.rs`;
 - `src/lib.rs` only if a public generic API correction genuinely requires a re-export.
 
-Y005 implements no router cryptography, Proposal/I2PControl policy, dependency/release work or upstream activity.
+Y005 implements no router cryptography, Proposal/I2PControl policy, dependency/release work or upstream activity. Its closure is recorded in `plans/closure/005-y004-leaseset-auth-mode-consistency-corrective.md`.
 
 ## Historical milestones
 
@@ -79,7 +79,7 @@ Y005 implements no router cryptography, Proposal/I2PControl policy, dependency/r
 | Y002 | closed |
 | Y003 | historical closure; LeaseSet wire semantics superseded |
 | Y004 | closed; canonical wire vocabulary, but Y005 corrects later-discovered cross-field auth consistency |
-| Y005 | ready |
+| Y005 | closed at `59140a2277bf296928d2e8ce39a148182eeff044` |
 
 Historical closure records are not rewritten. Y005 supersedes only the affected Y004 consistency claim.
 
@@ -89,11 +89,11 @@ Historical closure records are not rewritten. Y005 supersedes only the affected 
 
 Current Emissary has no active Proposal mapping for LeaseSet client authorization, so the Y005 defect is not an active runtime security downgrade there. However, no future M113/LeaseSet implementation should build against Y004 after Y005 is known.
 
-A future Emissary plan may advance the exact pin only after Y005 closes and the consumer independently reviews the exact implementation revision.
+A future Emissary plan may now advance the exact pin to Y005, subject to an independent consumer review of the exact implementation revision. No consumer dependency pin is changed here.
 
 ## Registry rules
 
-1. Y005 is the sole dependency-ready Yosemite handoff.
+1. Y005 is closed; no further Yosemite implementation plan is currently registered as ready.
 2. Do not rewrite Y003/Y004 closure history; Y005 closure records the new corrective disposition.
 3. Default Yosemite behavior must remain compatible for callers that do not configure corrected LeaseSet features.
 4. No Yosemite router/crypto implementation is authorized by this workstream.

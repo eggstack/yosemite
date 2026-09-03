@@ -1,6 +1,10 @@
 # Y005 — Y004 LeaseSet Auth-Mode Consistency Corrective
 
-Status: **ready**
+Status: **closed**
+
+Closure: `plans/closure/005-y004-leaseset-auth-mode-consistency-corrective.md`
+
+Implementation commit: `59140a2277bf296928d2e8ce39a148182eeff044`
 
 Class: invariant / protocol-correctness corrective
 

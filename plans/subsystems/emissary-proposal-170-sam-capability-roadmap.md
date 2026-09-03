@@ -1,6 +1,6 @@
 # Emissary Proposal 170 — Yosemite SAM Capability Roadmap
 
-Status: active; Y001/Y002/Y004 closed, Y003 historical, Y005 ready corrective
+Status: active; Y001/Y002/Y004/Y005 closed, Y003 historical; future Emissary adoption unblocked for separate consumer review
 
 Initial baseline: `d0fe71da214b212790773be12a93162ae71f3e03` (Yosemite 0.7.0)
 
@@ -83,13 +83,13 @@ Y003 LeaseSet option attempt                        [HISTORICAL]
 Y004 canonical LeaseSet vocabulary/representation  [CLOSED / CONSUMED]
   |
   v
-Y005 LeaseSet auth-mode/type consistency            [READY]
+Y005 LeaseSet auth-mode/type consistency            [CLOSED]
   |
   v
-Emissary corrected exact-pin adoption               [EXTERNAL / BLOCKED ON Y005]
+Emissary corrected exact-pin adoption               [EXTERNAL / UNBLOCKED; SEPARATE CONSUMER REVIEW]
 ```
 
-Only the next dependency-ready Yosemite plan is registered as ready. Consumer adoption remains a separate Emissary review under ADR-0005.
+No further Yosemite implementation plan is currently registered as ready. Consumer adoption remains a separate Emissary review under ADR-0005.
 
 ## 7. Closed milestones
 
@@ -140,20 +140,22 @@ Plan:
 
 - `plans/implementation/005-y004-leaseset-auth-mode-consistency-corrective.md`
 
-Status: **ready**.
+Status: **closed at `59140a2277bf296928d2e8ce39a148182eeff044`**.
+
+Closure: `plans/closure/005-y004-leaseset-auth-mode-consistency-corrective.md`
 
 Baseline: `022b2ea192c5ad893531e344890728da0eb563a8`.
 
-Y005 must independently freeze and enforce the relationship among:
+Y005 independently froze and enforces the relationship among:
 
 - LeaseSet type/applicability;
 - `i2cp.leaseSetAuthType`;
 - `i2cp.leaseSetClient.dh.<n>`;
 - `i2cp.leaseSetClient.psk.<n>`.
 
-A typed configuration whose client-auth entries would be ignored under the selected reference branch must reject before `SESSION CREATE` bytes rather than serialize inert security material.
+A typed configuration whose client-auth entries would be ignored under the selected reference branch now rejects before `SESSION CREATE` bytes rather than serializing inert security material.
 
-Y005 must not guess whether nonzero auth requires at least one numbered external client or whether auth options require `leaseSetType=5`; those questions are frozen from I2CP/Java evidence before editing.
+The reference freeze records that nonzero auth may have an empty numbered external-client set, while auth settings and entries are applicable only to `leaseSetType=5`.
 
 Production authority is limited to Yosemite-generic option/serializer paths named by the Y005 plan.
 
