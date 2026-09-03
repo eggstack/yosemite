@@ -1,6 +1,6 @@
 # Emissary Proposal 170 — Yosemite SAM Capability Roadmap
 
-Status: active; Y001/Y002 closed, Y003 historical closure requires Y004 corrective
+Status: active; Y001/Y002/Y004 closed, Y003 historical closure superseded for LeaseSet wire semantics
 
 Baseline: `d0fe71da214b212790773be12a93162ae71f3e03` (Yosemite 0.7.0)
 
@@ -42,7 +42,7 @@ Y003 subsequently attempted to add generic LeaseSet session-option transport. A 
 - a client-auth value type that cannot represent the reference client-name/key pair without a raw token;
 - speculative numeric bounds for authentication, blinded signature type, and LeaseSet type.
 
-Because Emissary remains pinned to Y002, this defective Y003 surface is not currently in the Emissary dependency graph. Y004 is the corrective owner.
+Because Emissary remains pinned to Y002, this defective Y003 surface is not currently in the Emissary dependency graph. Y004 was the corrective owner and is now closed.
 
 ## 4. Invariants
 
@@ -83,13 +83,13 @@ Y002 signature-aware DEST GENERATE        [CLOSED]
 Y003 LeaseSet option surface              [HISTORICAL CLOSED; CORRECTIVE REQUIRED]
   |
   v
-Y004 LeaseSet wire semantics corrective   [READY]
+Y004 LeaseSet wire semantics corrective   [CLOSED]
   |
   v
-Emissary corrected pin / LeaseSet retry   [EXTERNAL; BLOCKED ON Y004]
+Emissary corrected pin / LeaseSet retry   [EXTERNAL; UNBLOCKED BY Y004 CLOSURE / CONSUMER REVIEW REQUIRED]
 ```
 
-Emissary adoption is an external/internal consumer dependency and occurs only after exact Yosemite implementation commits close the relevant milestones.
+Emissary adoption is an external/internal consumer dependency and occurs only after exact Yosemite implementation commits close the relevant milestones. Y004 closes the Yosemite-side blocker; current Emissary remains on Y002 until a separate consumer plan reviews and selects the exact Y004 revision.
 
 ## 7. Y001 — bounded SESSION CREATE option surface
 
@@ -116,7 +116,7 @@ Status: **closed** at implementation commit `8026f5b424fc178d683e63555335f8b33e0
 
 Y002 adds an explicitly signature-aware public destination-generation path while preserving the parameterless/default Ed25519 path. Async and sync APIs remain aligned.
 
-This is the current Emissary I2PControl pin and remains the accepted dependency until Y004 closes and a later Emissary plan explicitly advances the revision.
+This is the current Emissary I2PControl pin. It remains unchanged until a later Emissary plan explicitly advances the revision to an exact reviewed Y004 implementation commit.
 
 ## 9. Y003 — historical LeaseSet session-option surface
 
@@ -134,9 +134,11 @@ Do not rewrite Y003 history and do not pin Emissary to Y003.
 
 Plan: `plans/implementation/004-y003-leaseset-wire-semantics-corrective.md`
 
-Status: **ready**.
+Status: **closed** at implementation commit `c2db73dba35dd9392947af5c74df29b0b556775f`.
 
-Y004 must independently re-freeze the exact Java/I2CP vocabulary and correct:
+Closure: `plans/closure/004-y003-leaseset-wire-semantics-corrective.md`.
+
+Y004 independently re-froze the exact Java/I2CP vocabulary and corrected:
 
 - persistent LeaseSet encryption/signing private-key property names and the semantic distinction from `i2cp.leaseSetPrivKey`;
 - mode-aware DH/PSK client-auth keys and values;
@@ -171,4 +173,4 @@ This roadmap is complete when:
 3. Emissary consumes only exact reviewed internal fork revisions through its accepted I2PControl-only dependency boundary;
 4. no Proposal-specific policy enters Yosemite.
 
-All external/upstream sources remain read-only. No upstream PR, issue, review, release, submission, adoption request, or maintainer contact is part of this roadmap.
+All external/upstream sources remain read-only. No upstream PR, issue, review, release, submission, or maintainer contact is part of this roadmap; consumer adoption remains a separate reviewed internal-consumer activity.

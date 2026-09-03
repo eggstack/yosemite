@@ -1,6 +1,10 @@
 # Y004 — Y003 LeaseSet Wire Semantics Corrective
 
-Status: **ready**
+Status: **closed**
+
+Closure: `plans/closure/004-y003-leaseset-wire-semantics-corrective.md`
+
+Implementation commit: `c2db73dba35dd9392947af5c74df29b0b556775f`
 
 Class: corrective / protocol serialization / security containment
 

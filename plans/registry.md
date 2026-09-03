@@ -33,6 +33,8 @@ Y001 and Y002 remain closed and valid:
 
 Y003 implementation `9ac7d9a0ac2a8d526e363f150466b579b017e116` is historical but its LeaseSet wire-semantic claims require correction. A post-closure audit found non-canonical private/signing-key spellings, a non-canonical client-auth namespace/representation, and guessed numeric domains. Current Emissary is not exposed because it remains pinned to Y002.
 
+Y004 implementation `c2db73dba35dd9392947af5c74df29b0b556775f` is closed with canonical I2CP LeaseSet property names, mode-aware DH/PSK client authorization, reference-backed numeric domains, and regression evidence. Its closure supersedes Y003's LeaseSet wire-semantic claims without rewriting the historical Y003 record.
+
 ## Dependency graph
 
 ```text
@@ -45,19 +47,23 @@ Y002 signature-aware DEST GENERATE API              [CLOSED]
 Y003 LeaseSet option surface                         [HISTORICAL CLOSED; CORRECTIVE REQUIRED]
   |
   v
-Y004 canonical LeaseSet wire corrective              [READY]
+Y004 canonical LeaseSet wire corrective              [CLOSED]
   |
   v
-future Emissary exact-revision adoption              [EXTERNAL / BLOCKED ON Y004 CLOSURE]
+future Emissary exact-revision adoption              [EXTERNAL / UNBLOCKED BY Y004 CLOSURE; CONSUMER REVIEW REQUIRED]
 ```
 
-## Current handoff — Y004
+## Completed handoff — Y004
 
 Plan:
 
 - `plans/implementation/004-y003-leaseset-wire-semantics-corrective.md`
 
-Status: **ready**.
+Status: **closed** at implementation `c2db73dba35dd9392947af5c74df29b0b556775f`.
+
+Closure:
+
+- `plans/closure/004-y003-leaseset-wire-semantics-corrective.md`.
 
 Baseline:
 
@@ -79,6 +85,12 @@ Authorized production paths are Yosemite-generic owners only:
 - `src/error.rs` only if a generic validation error distinction is necessary.
 
 Y004 implements no router cryptography, Emissary/I2PControl policy, Proposal matrix state, TLS behavior, dependency/release work, or upstream activity.
+
+Future unblocking review:
+
+- The Yosemite-side blocker for a future Emissary exact-revision adoption plan is removed.
+- Current Emissary remains pinned to Y002; advancing that pin requires a separate reviewed consumer plan and an exact Y004 revision selection.
+- No later Yosemite plan is registered as blocked on Y004, and no consumer-side change was made by this closure.
 
 ## Recently closed / historical milestones
 
@@ -108,11 +120,21 @@ Historical implementation: `9ac7d9a0ac2a8d526e363f150466b579b017e116`.
 
 Disposition: historical closure preserved, but its LeaseSet wire-semantic correctness is superseded by Y004 corrective authority. Do not offer Y003 as an Emissary pin candidate.
 
+### Y004
+
+Plan: `plans/implementation/004-y003-leaseset-wire-semantics-corrective.md`
+
+Closure: `plans/closure/004-y003-leaseset-wire-semantics-corrective.md`
+
+Status: **closed** at implementation `c2db73dba35dd9392947af5c74df29b0b556775f`.
+
+Disposition: canonical LeaseSet wire semantics are implemented and verified in the Yosemite-generic option/serialization paths. The future Emissary exact-revision adoption dependency is unblocked, but adoption remains a separate consumer-owned review and is not implied by this repository closure.
+
 ## Registry rules
 
-1. Y004 is the sole dependency-ready Yosemite handoff.
+1. Y004 is closed; any future Yosemite implementation requires its own dependency-reviewed plan.
 2. Do not rewrite Y003 closure history; Y004 closure records the corrective disposition.
-3. Current Emissary must remain pinned to Y002 until a reviewed Y004 implementation commit closes.
+3. Current Emissary remains pinned to Y002 until a separate reviewed consumer plan advances it to an exact Y004 implementation revision.
 4. Default Yosemite behavior must remain compatible for callers that do not configure the corrected LeaseSet features.
 5. No Yosemite router/crypto implementation is authorized by this workstream.
-6. All work is internal-only; no upstream PR/issue/review/release/contact/submission/adoption activity is authorized.
+6. All work is internal-only; this closure performs no upstream PR/issue/review/release/contact/submission or consumer-adoption activity.
