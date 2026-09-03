@@ -14,127 +14,88 @@ Initial fork baseline:
 
 - Yosemite 0.7.0 / `d0fe71da214b212790773be12a93162ae71f3e03`.
 
-## Status vocabulary
-
-- **proposed** — documented but not approved for execution;
-- **ready** — dependency-ready and may be handed off;
-- **active** — implementation or closure is in progress;
-- **blocked** — named dependency/evidence gate prevents execution;
-- **closing** — implementation landed and closure evidence is being gathered;
-- **closed** — closure accepted;
-- **corrective pass required** — a later audit invalidated a material claim from an earlier closure.
-
 ## Current state
 
-Y001 and Y002 remain closed and valid:
-
-- Y001 implementation `beafafa33e563760a0484df1b5fcaec4e0f8c5e4` provides bounded generic `SESSION CREATE` options plus truthful signature/variance/backup serialization;
-- Y002 implementation `8026f5b424fc178d683e63555335f8b33e0aba04` provides signature-aware destination generation and remains the exact revision consumed by current Emissary.
-
-Y003 implementation `9ac7d9a0ac2a8d526e363f150466b579b017e116` is historical but its LeaseSet wire-semantic claims require correction. A post-closure audit found non-canonical private/signing-key spellings, a non-canonical client-auth namespace/representation, and guessed numeric domains. Current Emissary is not exposed because it remains pinned to Y002.
-
-Y004 implementation `c2db73dba35dd9392947af5c74df29b0b556775f` is closed with canonical I2CP LeaseSet property names, mode-aware DH/PSK client authorization, reference-backed numeric domains, and regression evidence. Its closure supersedes Y003's LeaseSet wire-semantic claims without rewriting the historical Y003 record.
+- Y001 is closed at `beafafa33e563760a0484df1b5fcaec4e0f8c5e4` (bounded `SESSION CREATE` options, signature/variance/backup serialization).
+- Y002 is closed at `8026f5b424fc178d683e63555335f8b33e0aba04` (signature-aware destination generation).
+- Y003 is historical; its LeaseSet wire-semantic claims were superseded by Y004.
+- Y004 is closed at `c2db73dba35dd9392947af5c74df29b0b556775f` and is the exact revision currently consumed by Emissary M122.
+- Post-Y004 review found a remaining cross-field correctness defect: typed `lease_set_auth_type` and DH/PSK client-auth entries can be serialized in combinations the Java reference does not consume under the selected auth branch.
+- Y005 is the corrective owner.
 
 ## Dependency graph
 
 ```text
-Y001 bounded SESSION CREATE option surface          [CLOSED]
+Y001 bounded SESSION CREATE option surface           [CLOSED]
   |
   v
-Y002 signature-aware DEST GENERATE API              [CLOSED]
+Y002 signature-aware DEST GENERATE                   [CLOSED]
   |
   v
-Y003 LeaseSet option surface                         [HISTORICAL CLOSED; CORRECTIVE REQUIRED]
+Y003 LeaseSet option attempt                         [HISTORICAL]
   |
   v
-Y004 canonical LeaseSet wire corrective              [CLOSED]
+Y004 canonical LeaseSet wire corrective              [CLOSED / CONSUMED BY EMISSARY]
   |
   v
-future Emissary exact-revision adoption              [EXTERNAL / UNBLOCKED BY Y004 CLOSURE; CONSUMER REVIEW REQUIRED]
+Y005 auth-mode/type cross-field consistency          [READY]
+  |
+  v
+future Emissary exact-revision adoption              [EXTERNAL / BLOCKED ON Y005 CLOSURE]
 ```
 
-## Completed handoff — Y004
+## Current handoff — Y005
 
 Plan:
 
-- `plans/implementation/004-y003-leaseset-wire-semantics-corrective.md`
+- `plans/implementation/005-y004-leaseset-auth-mode-consistency-corrective.md`
 
-Status: **closed** at implementation `c2db73dba35dd9392947af5c74df29b0b556775f`.
-
-Closure:
-
-- `plans/closure/004-y003-leaseset-wire-semantics-corrective.md`.
+Status: **ready**.
 
 Baseline:
 
-- `94d7455c9f78ebb74b7a68823e921db0d76c85c1`.
+- `022b2ea192c5ad893531e344890728da0eb563a8`.
 
 Objective:
 
-- independently re-freeze the canonical I2CP LeaseSet property vocabulary;
-- correct `leaseSetPrivateKey` / `leaseSetSigningPrivateKey` semantics;
-- replace the generic `leaseSetClientAuth.<n>` representation with exact mode-aware DH/PSK client authorization;
-- replace Y003's guessed auth/blinded/LeaseSet-type domains with reference-backed domains;
-- retain bounded validation, deterministic serialization, fail-before-wire behavior, redaction, and default compatibility.
+- independently freeze the relationship among LeaseSet type, `i2cp.leaseSetAuthType`, and numbered DH/PSK client-auth entries;
+- reject typed combinations whose security-relevant entries would be ignored by the reference branch;
+- preserve canonical Y004 property spelling, numeric domains, deterministic numbering, bounded validation, redaction and default wire behavior;
+- remain generic Yosemite API-to-SAM behavior only.
 
-Authorized production paths are Yosemite-generic owners only:
+Authorized production scope is limited to:
 
 - `src/options.rs`;
 - `src/proto/session.rs`;
-- `src/lib.rs` if public type re-exports are required;
-- `src/error.rs` only if a generic validation error distinction is necessary.
+- `src/lib.rs` only if a public generic API correction genuinely requires a re-export.
 
-Y004 implements no router cryptography, Emissary/I2PControl policy, Proposal matrix state, TLS behavior, dependency/release work, or upstream activity.
+Y005 implements no router cryptography, Proposal/I2PControl policy, dependency/release work or upstream activity.
 
-Future unblocking review:
+## Historical milestones
 
-- The Yosemite-side blocker for a future Emissary exact-revision adoption plan is removed.
-- Current Emissary remains pinned to Y002; advancing that pin requires a separate reviewed consumer plan and an exact Y004 revision selection.
-- No later Yosemite plan is registered as blocked on Y004, and no consumer-side change was made by this closure.
+| Milestone | Disposition |
+|---|---|
+| Y001 | closed |
+| Y002 | closed |
+| Y003 | historical closure; LeaseSet wire semantics superseded |
+| Y004 | closed; canonical wire vocabulary, but Y005 corrects later-discovered cross-field auth consistency |
+| Y005 | ready |
 
-## Recently closed / historical milestones
+Historical closure records are not rewritten. Y005 supersedes only the affected Y004 consistency claim.
 
-### Y001
+## Consumer state
 
-Plan: `plans/implementation/001-bounded-session-create-option-surface.md`
+`eggstack/emissary` M122 currently exact-pins Y004 `c2db73dba35dd9392947af5c74df29b0b556775f` through its optional I2PControl-only package alias. Y004 is not used by ordinary/non-I2PControl Emissary paths.
 
-Closure: `plans/closure/001-bounded-session-create-option-surface.md`
+Current Emissary has no active Proposal mapping for LeaseSet client authorization, so the Y005 defect is not an active runtime security downgrade there. However, no future M113/LeaseSet implementation should build against Y004 after Y005 is known.
 
-Status: **closed** at implementation `beafafa33e563760a0484df1b5fcaec4e0f8c5e4`.
-
-### Y002
-
-Plan: `plans/implementation/002-signature-aware-destination-generation.md`
-
-Closure: `plans/closure/002-signature-aware-destination-generation.md`
-
-Status: **closed** at implementation `8026f5b424fc178d683e63555335f8b33e0aba04`.
-
-### Y003
-
-Plan: `plans/implementation/003-leaseset-session-option-surface.md`
-
-Closure: `plans/closure/003-leaseset-session-option-surface.md`
-
-Historical implementation: `9ac7d9a0ac2a8d526e363f150466b579b017e116`.
-
-Disposition: historical closure preserved, but its LeaseSet wire-semantic correctness is superseded by Y004 corrective authority. Do not offer Y003 as an Emissary pin candidate.
-
-### Y004
-
-Plan: `plans/implementation/004-y003-leaseset-wire-semantics-corrective.md`
-
-Closure: `plans/closure/004-y003-leaseset-wire-semantics-corrective.md`
-
-Status: **closed** at implementation `c2db73dba35dd9392947af5c74df29b0b556775f`.
-
-Disposition: canonical LeaseSet wire semantics are implemented and verified in the Yosemite-generic option/serialization paths. The future Emissary exact-revision adoption dependency is unblocked, but adoption remains a separate consumer-owned review and is not implied by this repository closure.
+A future Emissary plan may advance the exact pin only after Y005 closes and the consumer independently reviews the exact implementation revision.
 
 ## Registry rules
 
-1. Y004 is closed; any future Yosemite implementation requires its own dependency-reviewed plan.
-2. Do not rewrite Y003 closure history; Y004 closure records the corrective disposition.
-3. Current Emissary remains pinned to Y002 until a separate reviewed consumer plan advances it to an exact Y004 implementation revision.
-4. Default Yosemite behavior must remain compatible for callers that do not configure the corrected LeaseSet features.
-5. No Yosemite router/crypto implementation is authorized by this workstream.
-6. All work is internal-only; this closure performs no upstream PR/issue/review/release/contact/submission or consumer-adoption activity.
+1. Y005 is the sole dependency-ready Yosemite handoff.
+2. Do not rewrite Y003/Y004 closure history; Y005 closure records the new corrective disposition.
+3. Default Yosemite behavior must remain compatible for callers that do not configure corrected LeaseSet features.
+4. No Yosemite router/crypto implementation is authorized by this workstream.
+5. No consumer dependency pin is changed from this repository.
+6. All external/upstream sources remain read-only; no upstream PR/issue/review/release/contact/submission/adoption activity is authorized.
