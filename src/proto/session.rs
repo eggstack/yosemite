@@ -267,10 +267,7 @@ impl SessionController {
                 // without re-validating. Order is deterministic via sorted keys where applicable.
                 let mut lease_options: Vec<(String, String)> = Vec::new();
                 if self.options.encrypt_lease_set {
-                    lease_options.push((
-                        "i2cp.encryptLeaseSet".to_string(),
-                        "true".to_string(),
-                    ));
+                    lease_options.push(("i2cp.encryptLeaseSet".to_string(), "true".to_string()));
                 }
                 if self.options.lease_set_auth_type != 0 {
                     lease_options.push((
@@ -294,33 +291,39 @@ impl SessionController {
                     lease_options.push(("i2cp.leaseSetKey".to_string(), value.clone()));
                 }
                 if let Some(value) = &self.options.lease_set_private_key {
-                    lease_options.push(("i2cp.leaseSetPrivKey".to_string(), value.clone()));
+                    lease_options.push(("i2cp.leaseSetPrivateKey".to_string(), value.clone()));
                 }
                 if let Some(value) = &self.options.lease_set_secret {
                     lease_options.push(("i2cp.leaseSetSecret".to_string(), value.clone()));
                 }
                 if let Some(value) = &self.options.lease_set_signing_private_key {
-                    lease_options.push((
-                        "i2cp.leaseSetSigningPrivKey".to_string(),
-                        value.clone(),
-                    ));
+                    lease_options
+                        .push(("i2cp.leaseSetSigningPrivateKey".to_string(), value.clone()));
                 }
-                // Deterministic numbered client-auth entries: sort by key, then number.
-                let mut sorted_auths = self
-                    .options
-                    .lease_set_client_auths
-                    .iter()
-                    .map(|a| a.key().to_string())
-                    .collect::<Vec<_>>();
-                sorted_auths.sort();
-                for (index, key) in sorted_auths.iter().enumerate() {
-                    lease_options.push((
-                        format!("i2cp.leaseSetClientAuth.{index}"),
-                        key.clone(),
-                    ));
+
+                // Number each authorization mode independently, in deterministic wire-value
+                // order. Validation has already rejected duplicate names within a mode.
+                for mode in [
+                    crate::options::LeaseSetClientAuthMode::Dh,
+                    crate::options::LeaseSetClientAuthMode::Psk,
+                ] {
+                    let mut auths = self
+                        .options
+                        .lease_set_client_auths
+                        .iter()
+                        .filter(|auth| auth.mode() == mode)
+                        .collect::<Vec<_>>();
+                    auths.sort_by_key(|auth| auth.wire_value());
+                    for (index, auth) in auths.iter().enumerate() {
+                        lease_options.push((
+                            format!("{}{index}", auth.wire_key_prefix()),
+                            auth.wire_value(),
+                        ));
+                    }
                 }
-                // Sort lease options by key for deterministic wire (except numbered entries already in index order).
-                // Numbered entries sort naturally by their numeric suffix.
+
+                // Sort typed options by their complete canonical key. The per-mode numbering is
+                // assigned above and is therefore unaffected by insertion order.
                 lease_options.sort_by(|a, b| a.0.cmp(&b.0));
                 for (key, value) in lease_options {
                     command += format!(" {key}={value}").as_str();
@@ -769,7 +772,9 @@ impl SessionController {
 mod tests {
     use super::*;
     use crate::{
-        SessionOption, MAX_ADDITIONAL_SESSION_OPTIONS, MAX_SESSION_OPTION_KEY_LENGTH,
+        LeaseSetClientAuth, SessionOption, MAX_ADDITIONAL_SESSION_OPTIONS,
+        MAX_LEASE_SET_CLIENT_AUTHS, MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH,
+        MAX_LEASE_SET_CLIENT_NAME_LENGTH, MAX_SESSION_OPTION_KEY_LENGTH,
         MAX_SESSION_OPTION_VALUE_LENGTH,
     };
 
@@ -1398,30 +1403,41 @@ mod tests {
 
     #[test]
     fn session_create_serializes_leaseset_typed_options() {
+        // Independent reference fixture: these literals come from the Java/I2CP vocabulary and
+        // are intentionally not derived from the serializer's emitted strings.
+        const CANONICAL_KEYS: &[&str] = &[
+            "i2cp.encryptLeaseSet",
+            "i2cp.leaseSetAuthType",
+            "i2cp.leaseSetBlindedType",
+            "i2cp.leaseSetType",
+            "i2cp.leaseSetKey",
+            "i2cp.leaseSetPrivateKey",
+            "i2cp.leaseSetSecret",
+            "i2cp.leaseSetSigningPrivateKey",
+            "i2cp.leaseSetClient.dh.0",
+            "i2cp.leaseSetClient.psk.0",
+        ];
+
         // Default wire must remain unchanged when encrypted/auth settings are unused.
         let default_command = create_stream_command(SessionOptions::default()).unwrap();
-        assert!(!default_command.contains("i2cp.encryptLeaseSet"));
-        assert!(!default_command.contains("i2cp.leaseSetAuthType"));
-        assert!(!default_command.contains("i2cp.leaseSetBlindedType"));
-        assert!(!default_command.contains("i2cp.leaseSetType"));
-        assert!(!default_command.contains("i2cp.leaseSetKey"));
-        assert!(!default_command.contains("i2cp.leaseSetPrivKey"));
-        assert!(!default_command.contains("i2cp.leaseSetSecret"));
-        assert!(!default_command.contains("i2cp.leaseSetSigningPrivKey"));
-        assert!(!default_command.contains("i2cp.leaseSetClientAuth."));
+        for key in CANONICAL_KEYS {
+            assert!(!default_command.contains(key), "default emitted {key}");
+        }
 
         // Non-default encrypt + auth + blinded + type + secrets.
-        let mut options = SessionOptions::default();
-        options.encrypt_lease_set = true;
-        options.lease_set_auth_type = 1;
-        options.lease_set_blinded_type = 10;
-        options.lease_set_type = 3;
-        options.lease_set_key = Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string());
-        options.lease_set_private_key =
-            Some("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=".to_string());
-        options.lease_set_secret = Some("c2VjcmV0LXZhbHVlLWZpeHR1cmU=".to_string());
-        options.lease_set_signing_private_key =
-            Some("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=".to_string());
+        let options = SessionOptions {
+            encrypt_lease_set: true,
+            lease_set_auth_type: 1,
+            lease_set_blinded_type: 10,
+            lease_set_type: 3,
+            lease_set_key: Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string()),
+            lease_set_private_key: Some("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=".to_string()),
+            lease_set_secret: Some("c2VjcmV0LXZhbHVlLWZpeHR1cmU=".to_string()),
+            lease_set_signing_private_key: Some(
+                "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=".to_string(),
+            ),
+            ..Default::default()
+        };
 
         let command = create_stream_command(options).unwrap();
         assert_eq!(option_count(&command, "i2cp.encryptLeaseSet"), 1);
@@ -1429,87 +1445,112 @@ mod tests {
         assert_eq!(option_count(&command, "i2cp.leaseSetBlindedType"), 1);
         assert_eq!(option_count(&command, "i2cp.leaseSetType"), 1);
         assert_eq!(option_count(&command, "i2cp.leaseSetKey"), 1);
-        assert_eq!(option_count(&command, "i2cp.leaseSetPrivKey"), 1);
+        assert_eq!(option_count(&command, "i2cp.leaseSetPrivateKey"), 1);
         assert_eq!(option_count(&command, "i2cp.leaseSetSecret"), 1);
-        assert_eq!(option_count(&command, "i2cp.leaseSetSigningPrivKey"), 1);
+        assert_eq!(option_count(&command, "i2cp.leaseSetSigningPrivateKey"), 1);
         assert!(command.contains("i2cp.encryptLeaseSet=true"));
         assert!(command.contains("i2cp.leaseSetAuthType=1"));
         assert!(command.contains("i2cp.leaseSetBlindedType=10"));
         assert!(command.contains("i2cp.leaseSetType=3"));
         assert!(command.contains("i2cp.leaseSetKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
-        assert!(command.contains("i2cp.leaseSetPrivKey=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="));
+        assert!(command
+            .contains("i2cp.leaseSetPrivateKey=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="));
         assert!(command.contains("i2cp.leaseSetSecret=c2VjcmV0LXZhbHVlLWZpeHR1cmU="));
         assert!(command.contains(
-            "i2cp.leaseSetSigningPrivKey=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
+            "i2cp.leaseSetSigningPrivateKey=CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
         ));
+        assert!(!command.contains("i2cp.leaseSetPrivKey="));
+        assert!(!command.contains("i2cp.leaseSetSigningPrivKey="));
         assert_eq!(command.matches('\n').count(), 1);
     }
 
     #[test]
     fn session_create_serializes_leaseset_client_auths_deterministically() {
         let mut options = SessionOptions::default();
-        // Insert out of order to verify deterministic sorting + numbering.
-        let key_b = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";
-        let key_a = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-        let key_c = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=";
-        options.add_lease_set_client_auth(key_c).unwrap();
-        options.add_lease_set_client_auth(key_a).unwrap();
-        options.add_lease_set_client_auth(key_b).unwrap();
+        const KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+
+        // Insert both modes out of order to verify deterministic per-mode numbering.
+        options
+            .add_lease_set_client_auth(LeaseSetClientAuth::psk("zulu", KEY).unwrap())
+            .unwrap();
+        options
+            .add_lease_set_client_auth(LeaseSetClientAuth::dh("zulu", KEY).unwrap())
+            .unwrap();
+        options
+            .add_lease_set_client_auth(LeaseSetClientAuth::psk("alice", KEY).unwrap())
+            .unwrap();
+        options
+            .add_lease_set_client_auth(LeaseSetClientAuth::dh("alice", KEY).unwrap())
+            .unwrap();
 
         let command = create_stream_command(options).unwrap();
-        assert_eq!(option_count(&command, "i2cp.leaseSetClientAuth.0"), 1);
-        assert_eq!(option_count(&command, "i2cp.leaseSetClientAuth.1"), 1);
-        assert_eq!(option_count(&command, "i2cp.leaseSetClientAuth.2"), 1);
-        // Sorted order: A, B, C
-        let pos_a = command.find(key_a).unwrap();
-        let pos_b = command.find(key_b).unwrap();
-        let pos_c = command.find(key_c).unwrap();
-        assert!(pos_a < pos_b && pos_b < pos_c);
-        assert!(command.contains(&format!("i2cp.leaseSetClientAuth.0={key_a}")));
-        assert!(command.contains(&format!("i2cp.leaseSetClientAuth.1={key_b}")));
-        assert!(command.contains(&format!("i2cp.leaseSetClientAuth.2={key_c}")));
+        assert_eq!(option_count(&command, "i2cp.leaseSetClient.dh.0"), 1);
+        assert_eq!(option_count(&command, "i2cp.leaseSetClient.dh.1"), 1);
+        assert_eq!(option_count(&command, "i2cp.leaseSetClient.psk.0"), 1);
+        assert_eq!(option_count(&command, "i2cp.leaseSetClient.psk.1"), 1);
+        assert!(command.contains(&format!("i2cp.leaseSetClient.dh.0=YWxpY2U=:{KEY}")));
+        assert!(command.contains(&format!("i2cp.leaseSetClient.dh.1=enVsdQ==:{KEY}")));
+        assert!(command.contains(&format!("i2cp.leaseSetClient.psk.0=YWxpY2U=:{KEY}")));
+        assert!(command.contains(&format!("i2cp.leaseSetClient.psk.1=enVsdQ==:{KEY}")));
         // Second creation must be identical (deterministic) modulo random nickname.
         let mut options2 = SessionOptions::default();
-        options2.add_lease_set_client_auth(key_a).unwrap();
-        options2.add_lease_set_client_auth(key_b).unwrap();
-        options2.add_lease_set_client_auth(key_c).unwrap();
+        options2
+            .add_lease_set_client_auth(LeaseSetClientAuth::dh("alice", KEY).unwrap())
+            .unwrap();
+        options2
+            .add_lease_set_client_auth(LeaseSetClientAuth::psk("alice", KEY).unwrap())
+            .unwrap();
+        options2
+            .add_lease_set_client_auth(LeaseSetClientAuth::dh("zulu", KEY).unwrap())
+            .unwrap();
+        options2
+            .add_lease_set_client_auth(LeaseSetClientAuth::psk("zulu", KEY).unwrap())
+            .unwrap();
         let command2 = create_stream_command(options2).unwrap();
         // Compare suffix after SIGNATURE_TYPE to ignore random ID.
-        let suffix = |cmd: &str| {
-            cmd.split("SIGNATURE_TYPE=7")
-                .nth(1)
-                .unwrap_or("")
-                .to_string()
-        };
+        let suffix = |cmd: &str| cmd.split("SIGNATURE_TYPE=7").nth(1).unwrap_or("").to_string();
         assert_eq!(suffix(&command), suffix(&command2));
     }
 
     #[test]
     fn lease_set_client_auth_rejects_duplicates_and_bounds() {
+        const KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
         let mut options = SessionOptions::default();
-        let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-        options.add_lease_set_client_auth(key).unwrap();
-        assert!(options.add_lease_set_client_auth(key).is_err());
-        // Case-insensitive duplicate
+        let alice = LeaseSetClientAuth::dh("alice", KEY).unwrap();
+        options.add_lease_set_client_auth(alice.clone()).unwrap();
+        assert!(options.add_lease_set_client_auth(alice).is_err());
+        // The client name is the logical identity within one authorization mode, regardless of
+        // whether the key material differs.
         assert!(options
-            .add_lease_set_client_auth(key.to_ascii_lowercase())
+            .add_lease_set_client_auth(
+                LeaseSetClientAuth::dh("alice", "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=")
+                    .unwrap()
+            )
             .is_err());
+        // The same display name may be used once in each distinct reference namespace.
+        options
+            .add_lease_set_client_auth(LeaseSetClientAuth::psk("alice", KEY).unwrap())
+            .unwrap();
 
         // Max count
         let mut many = SessionOptions::default();
-        for i in 0..crate::MAX_LEASE_SET_CLIENT_AUTHS {
-            let ch = (b'A' + (i as u8 % 26)) as char;
-            let key = format!("{}{}", ch.to_string().repeat(43), "=");
-            many.add_lease_set_client_auth(key).unwrap();
+        for i in 0..MAX_LEASE_SET_CLIENT_AUTHS {
+            many.add_lease_set_client_auth(
+                LeaseSetClientAuth::dh(format!("client-{i}"), KEY).unwrap(),
+            )
+            .unwrap();
         }
-        assert_eq!(many.lease_set_client_auths.len(), crate::MAX_LEASE_SET_CLIENT_AUTHS);
+        assert_eq!(
+            many.lease_set_client_auths.len(),
+            MAX_LEASE_SET_CLIENT_AUTHS
+        );
         assert!(many
-            .add_lease_set_client_auth("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=")
+            .add_lease_set_client_auth(LeaseSetClientAuth::dh("overflow", KEY).unwrap())
             .is_err());
 
         // Direct vec mutation with duplicate must be caught by validation before wire.
         let mut controller = handshaked_controller(SessionOptions::default());
-        let dup = crate::LeaseSetClientAuth::new(key).unwrap();
+        let dup = LeaseSetClientAuth::dh("duplicate", KEY).unwrap();
         controller.options.lease_set_client_auths = vec![dup.clone(), dup];
         let result = controller.create_session(SessionParameters {
             style: "STREAM".to_string(),
@@ -1529,62 +1570,169 @@ mod tests {
             "AAA=AAA", // = in middle
             "value=with-equals",
             "value with spaces",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+=", // standard alphabet is not I2P base64
         ] {
             assert!(
-                crate::LeaseSetClientAuth::new(key).is_err(),
+                LeaseSetClientAuth::dh("client", key).is_err(),
                 "malformed key accepted: {key}"
             );
         }
-        let long = "A".repeat(crate::MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH + 1);
-        assert!(crate::LeaseSetClientAuth::new(long).is_err());
+        let long = "A".repeat(MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH + 1);
+        assert!(LeaseSetClientAuth::dh("client", long).is_err());
+        assert!(
+            LeaseSetClientAuth::dh("", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").is_err()
+        );
+        let long_name = "n".repeat(MAX_LEASE_SET_CLIENT_NAME_LENGTH + 1);
+        assert!(
+            LeaseSetClientAuth::dh(long_name, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+                .is_err()
+        );
+        assert!(
+            LeaseSetClientAuth::dh("client\n", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+                .is_err()
+        );
+        assert!(
+            LeaseSetClientAuth::dh("client", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB=")
+                .is_err()
+        );
         // Oversized secret
-        let mut options = SessionOptions::default();
-        options.lease_set_secret = Some("A".repeat(crate::MAX_LEASE_SET_SECRET_LENGTH + 1));
+        let options = SessionOptions {
+            lease_set_secret: Some("A".repeat(crate::MAX_LEASE_SET_SECRET_LENGTH + 1)),
+            ..Default::default()
+        };
         assert!(SessionController::new(options).is_err());
     }
 
     #[test]
     fn lease_set_typed_generic_conflict_rejects() {
-        let mut options = SessionOptions::default();
-        options.encrypt_lease_set = true;
-        assert!(options
-            .add_session_option("i2cp.encryptLeaseSet", "true")
-            .is_err());
+        let mut options = SessionOptions {
+            encrypt_lease_set: true,
+            ..Default::default()
+        };
+        assert!(options.add_session_option("i2cp.encryptLeaseSet", "true").is_err());
 
-        let mut options = SessionOptions::default();
-        options.lease_set_auth_type = 1;
-        assert!(options
-            .add_session_option("i2cp.leaseSetAuthType", "1")
-            .is_err());
+        let mut options = SessionOptions {
+            lease_set_auth_type: 1,
+            ..Default::default()
+        };
+        assert!(options.add_session_option("i2cp.leaseSetAuthType", "1").is_err());
 
         let mut options = SessionOptions::default();
         options
-            .add_lease_set_client_auth("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+            .add_lease_set_client_auth(
+                LeaseSetClientAuth::dh("client", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+                    .unwrap(),
+            )
             .unwrap();
-        assert!(options
-            .add_session_option("i2cp.leaseSetClientAuth.0", "value")
-            .is_err());
-        assert!(options
-            .add_session_option("i2cp.leaseSetClientAuth.99", "value")
-            .is_err());
+        assert!(options.add_session_option("i2cp.leaseSetClient.dh.0", "value").is_err());
+        assert!(options.add_session_option("i2cp.leaseSetClient.psk.99", "value").is_err());
 
         // Also validate that generic options cannot use reserved LeaseSet keys at all.
         assert!(crate::SessionOption::new("i2cp.leaseSetSecret", "value").is_err());
         assert!(crate::SessionOption::new("i2cp.encryptLeaseSet", "true").is_err());
         assert!(crate::SessionOption::new("i2cp.leaseSetAuthType", "1").is_err());
-        assert!(crate::SessionOption::new("i2cp.leaseSetClientAuth.0", "value").is_err());
+        for key in [
+            "i2cp.leaseSetPrivateKey",
+            "i2cp.leaseSetSigningPrivateKey",
+            "i2cp.leaseSetPrivKey",
+            "i2cp.leaseSetSigningPrivKey",
+            "i2cp.leaseSetClient.dh.0",
+            "i2cp.leaseSetClient.psk.0",
+        ] {
+            assert!(
+                crate::SessionOption::new(key, "value").is_err(),
+                "accepted {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn lease_set_numeric_domains_match_reference_wire_types() {
+        for auth_type in [0, 1, 2] {
+            let options = SessionOptions {
+                lease_set_auth_type: auth_type,
+                ..Default::default()
+            };
+            let command = create_stream_command(options).unwrap();
+            if auth_type == 0 {
+                assert_eq!(option_count(&command, "i2cp.leaseSetAuthType"), 0);
+            } else {
+                assert_eq!(option_count(&command, "i2cp.leaseSetAuthType"), 1);
+                assert!(command.contains(&format!("i2cp.leaseSetAuthType={auth_type}")));
+            }
+        }
+        for blinded_type in [0, 1, 12, u16::MAX as usize] {
+            let options = SessionOptions {
+                lease_set_blinded_type: blinded_type,
+                ..Default::default()
+            };
+            let command = create_stream_command(options).unwrap();
+            if blinded_type == 0 {
+                assert_eq!(option_count(&command, "i2cp.leaseSetBlindedType"), 0);
+            } else {
+                assert!(command.contains(&format!("i2cp.leaseSetBlindedType={blinded_type}")));
+            }
+        }
+        for lease_set_type in [1, 3, 5, 7, u8::MAX as usize] {
+            let options = SessionOptions {
+                lease_set_type,
+                ..Default::default()
+            };
+            let command = create_stream_command(options).unwrap();
+            if lease_set_type != 1 {
+                assert!(command.contains(&format!("i2cp.leaseSetType={lease_set_type}")));
+            }
+        }
+
+        for (field, value) in [
+            ("auth", 3usize),
+            ("blinded", u16::MAX as usize + 1),
+            ("lease_set", 0usize),
+            ("lease_set", u8::MAX as usize + 1),
+        ] {
+            let mut options = SessionOptions::default();
+            match field {
+                "auth" => options.lease_set_auth_type = value,
+                "blinded" => options.lease_set_blinded_type = value,
+                "lease_set" => options.lease_set_type = value,
+                _ => unreachable!(),
+            }
+            assert!(
+                SessionController::new(options).is_err(),
+                "accepted {field}={value}"
+            );
+        }
+
+        // Numeric LeaseSet keys are owned by the typed API, so malformed textual spellings cannot
+        // reach the wire through the generic option path either.
+        for value in ["-1", "256", " 3", "3 ", "+3", "0x5", "decimal"] {
+            assert!(SessionOption::new("i2cp.leaseSetType", value).is_err());
+        }
+
+        let mut controller = handshaked_controller(SessionOptions::default());
+        controller.options.lease_set_blinded_type = u16::MAX as usize + 1;
+        let result = controller.create_session(SessionParameters {
+            style: "STREAM".to_string(),
+            options: Vec::new(),
+        });
+        assert_eq!(result, Err(ProtocolError::InvalidOption));
+        assert_eq!(controller.state, SessionState::Handshaked);
     }
 
     #[test]
     fn lease_set_invalid_fails_before_bytes_no_downgrade() {
         // Invalid auth type
-        let mut options = SessionOptions::default();
-        options.lease_set_auth_type = 99;
+        let options = SessionOptions {
+            lease_set_auth_type: 99,
+            ..Default::default()
+        };
         assert!(SessionController::new(options).is_err());
 
         // Malformed base64 secret
-        let mut options = SessionOptions::default();
-        options.lease_set_secret = Some("not-base64!".to_string());
+        let options = SessionOptions {
+            lease_set_secret: Some("not-base64!".to_string()),
+            ..Default::default()
+        };
         let mut controller = handshaked_controller(SessionOptions::default());
         controller.options = options;
         let result = controller.create_session(SessionParameters {
@@ -1596,16 +1744,20 @@ mod tests {
         // Must not have emitted a weaker command (no bytes returned).
 
         // Invalid key length
-        let mut options = SessionOptions::default();
-        options.lease_set_key = Some("".to_string());
+        let options = SessionOptions {
+            lease_set_key: Some("".to_string()),
+            ..Default::default()
+        };
         assert!(SessionController::new(options).is_err());
 
         // Oversized client auth via direct vec
         let mut controller = handshaked_controller(SessionOptions::default());
-        let many = vec![
-            crate::LeaseSetClientAuth::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap();
-            crate::MAX_LEASE_SET_CLIENT_AUTHS + 1
-        ];
+        let many =
+            vec![
+                LeaseSetClientAuth::dh("client", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+                    .unwrap();
+                MAX_LEASE_SET_CLIENT_AUTHS + 1
+            ];
         controller.options.lease_set_client_auths = many;
         let result = controller.create_session(SessionParameters {
             style: "STREAM".to_string(),
@@ -1634,7 +1786,10 @@ mod tests {
         options.lease_set_signing_private_key =
             Some("CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=".to_string());
         options
-            .add_lease_set_client_auth("DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD=")
+            .add_lease_set_client_auth(
+                LeaseSetClientAuth::dh("client", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+                    .unwrap(),
+            )
             .unwrap();
 
         let debug = format!("{options:?}");
@@ -1650,16 +1805,15 @@ mod tests {
         assert!(debug.contains("<redacted>"));
 
         // Also check LeaseSetClientAuth Debug
-        let auth = crate::LeaseSetClientAuth::new(
-            "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE=",
-        )
-        .unwrap();
+        let auth =
+            LeaseSetClientAuth::psk("client", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+                .unwrap();
         let auth_debug = format!("{auth:?}");
-        assert!(!auth_debug.contains("EEEE"));
+        assert!(!auth_debug.contains("AAAAAAAA"));
         assert!(auth_debug.contains("<redacted>"));
 
         // Error path must not leak: InvalidOption Display is generic.
-        let err = crate::LeaseSetClientAuth::new("bad!").unwrap_err();
+        let err = LeaseSetClientAuth::dh("client", "bad!").unwrap_err();
         let err_str = format!("{err}");
         assert!(!err_str.contains("bad!"));
     }

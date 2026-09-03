@@ -68,11 +68,14 @@ pub const MAX_SESSION_OPTION_VALUE_LENGTH: usize = 256;
 /// Maximum number of LeaseSet client-auth entries.
 pub const MAX_LEASE_SET_CLIENT_AUTHS: usize = 16;
 
-/// Maximum byte length of a LeaseSet client-auth key.
+/// Maximum byte length of a LeaseSet client-auth key in I2P base64.
 ///
-/// The underlying X25519 public key is 32 bytes (44 base64 chars) but we allow a
-/// bounded larger value for future enc types while keeping a strict limit.
-pub const MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH: usize = 512;
+/// DH public keys and PSK keys are 32 bytes, represented by 43 unpadded or 44
+/// padded base64 characters.
+pub const MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH: usize = 44;
+
+/// Maximum byte length of a LeaseSet client name before I2P base64 encoding.
+pub const MAX_LEASE_SET_CLIENT_NAME_LENGTH: usize = 64;
 
 /// Maximum byte length of LeaseSet secret/key material.
 pub const MAX_LEASE_SET_SECRET_LENGTH: usize = 512;
@@ -158,8 +161,13 @@ fn is_reserved_session_option_key(key: &str) -> bool {
         "i2cp.leaseSetBlindedType",
         "i2cp.leaseSetType",
         "i2cp.leaseSetKey",
-        "i2cp.leaseSetPrivKey",
+        "i2cp.leaseSetPrivateKey",
         "i2cp.leaseSetSecret",
+        "i2cp.leaseSetSigningPrivateKey",
+        // These are distinct reference properties that are not represented by the typed API.
+        // Keep both the local-decryption property and Y003's incorrect aliases reserved so a
+        // generic option cannot reintroduce an ambiguous or non-canonical LeaseSet surface.
+        "i2cp.leaseSetPrivKey",
         "i2cp.leaseSetSigningPrivKey",
         "inbound.length",
         "inbound.quantity",
@@ -172,9 +180,18 @@ fn is_reserved_session_option_key(key: &str) -> bool {
     ]
     .iter()
     .any(|reserved| key.eq_ignore_ascii_case(reserved))
-        || key
-            .to_ascii_lowercase()
-            .starts_with("i2cp.leaseSetClientAuth.".to_ascii_lowercase().as_str())
+        || [
+            "i2cp.leaseSetClient.dh",
+            "i2cp.leaseSetClient.psk",
+            "i2cp.leaseSetClientAuth",
+        ]
+        .iter()
+        .any(|prefix| {
+            key.eq_ignore_ascii_case(prefix)
+                || key
+                    .to_ascii_lowercase()
+                    .starts_with(&format!("{}.", prefix.to_ascii_lowercase()))
+        })
 }
 
 fn is_valid_base64(value: &str) -> bool {
@@ -216,27 +233,158 @@ fn is_valid_lease_set_key(value: &str) -> bool {
     !value.is_empty() && value.len() <= MAX_LEASE_SET_SECRET_LENGTH && is_valid_base64(value)
 }
 
-/// A validated LeaseSet client-authorization entry.
+const I2P_BASE64_ALPHABET: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-~";
+
+fn i2p_base64_value(byte: u8) -> Option<u8> {
+    I2P_BASE64_ALPHABET
+        .iter()
+        .position(|candidate| *candidate == byte)
+        .map(|value| value as u8)
+}
+
+fn encode_i2p_base64(bytes: &[u8]) -> String {
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+
+    for chunk in bytes.chunks(3) {
+        let first = chunk[0] as u32;
+        let second = chunk.get(1).copied().unwrap_or(0) as u32;
+        let third = chunk.get(2).copied().unwrap_or(0) as u32;
+        let value = (first << 16) | (second << 8) | third;
+
+        encoded.push(I2P_BASE64_ALPHABET[(value >> 18 & 0x3f) as usize] as char);
+        encoded.push(I2P_BASE64_ALPHABET[(value >> 12 & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            encoded.push(I2P_BASE64_ALPHABET[(value >> 6 & 0x3f) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+        if chunk.len() > 2 {
+            encoded.push(I2P_BASE64_ALPHABET[(value & 0x3f) as usize] as char);
+        } else {
+            encoded.push('=');
+        }
+    }
+
+    encoded
+}
+
+fn is_valid_i2p_base64(value: &str, expected_decoded_length: usize) -> bool {
+    if value.is_empty() || value.len() > MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH {
+        return false;
+    }
+
+    let padding = value.bytes().rev().take_while(|byte| *byte == b'=').count();
+    if padding > 2 || value[..value.len() - padding].contains('=') {
+        return false;
+    }
+
+    let encoded_length = value.len() - padding;
+    if encoded_length % 4 == 1 {
+        return false;
+    }
+    if padding > 0 && !value.len().is_multiple_of(4) {
+        return false;
+    }
+    if padding == 1 && encoded_length % 4 != 3 {
+        return false;
+    }
+    if padding == 2 && encoded_length % 4 != 2 {
+        return false;
+    }
+    if value.bytes().take(encoded_length).any(|byte| i2p_base64_value(byte).is_none()) {
+        return false;
+    }
+
+    let decoded_length = (encoded_length / 4) * 3
+        + match encoded_length % 4 {
+            0 => 0,
+            2 => 1,
+            3 => 2,
+            _ => return false,
+        };
+    if decoded_length != expected_decoded_length {
+        return false;
+    }
+
+    // I2P's decoder requires unused trailing bits to be zero for unpadded input too.
+    if let Some(last_byte) = value.as_bytes().get(encoded_length - 1) {
+        let last_value = i2p_base64_value(*last_byte).unwrap();
+        match encoded_length % 4 {
+            2 if last_value & 0x0f != 0 => return false,
+            3 if last_value & 0x03 != 0 => return false,
+            _ => {}
+        }
+    }
+
+    true
+}
+
+/// The mode used for a LeaseSet per-client authorization entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LeaseSetClientAuthMode {
+    /// Diffie-Hellman authorization using a client X25519 public key.
+    Dh,
+
+    /// Pre-shared-key authorization using a client X25519/PSK key.
+    Psk,
+}
+
+/// A validated, typed LeaseSet client-authorization entry.
 ///
-/// This is a generic, bounded representation for per-client LeaseSet authentication
-/// material (e.g. X25519 public keys for DH/PSK). The router is authoritative for
-/// whether a given entry is honored; Yosemite only guarantees bounded, validated,
-/// non-leaking transport to the SESSION CREATE wire with deterministic ordering.
+/// The client name is encoded as UTF-8 with I2P base64 for the wire value. The
+/// key is a 32-byte X25519 public key for [`LeaseSetClientAuthMode::Dh`] or a
+/// 32-byte PSK for [`LeaseSetClientAuthMode::Psk`]. Yosemite constructs the
+/// reference `b64name:b64key` value and never accepts a preformatted command
+/// fragment.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LeaseSetClientAuth {
+    mode: LeaseSetClientAuthMode,
+    client_name: String,
     key: String,
 }
 
 impl LeaseSetClientAuth {
-    /// Create a validated client-auth entry.
+    /// Create a validated client-auth entry for `mode`.
     ///
-    /// The `key` must be a base64-encoded public key (or PSK material) without
-    /// whitespace, control characters, or SAM-token delimiters. Length is bounded
-    /// by `MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH`.
-    pub fn new(key: impl Into<String>) -> Result<Self, ProtocolError> {
-        let entry = Self { key: key.into() };
+    pub fn new(
+        mode: LeaseSetClientAuthMode,
+        client_name: impl Into<String>,
+        key: impl Into<String>,
+    ) -> Result<Self, ProtocolError> {
+        let entry = Self {
+            mode,
+            client_name: client_name.into(),
+            key: key.into(),
+        };
         entry.validate()?;
         Ok(entry)
+    }
+
+    /// Create a validated DH client-auth entry.
+    pub fn dh(
+        client_name: impl Into<String>,
+        public_key: impl Into<String>,
+    ) -> Result<Self, ProtocolError> {
+        Self::new(LeaseSetClientAuthMode::Dh, client_name, public_key)
+    }
+
+    /// Create a validated PSK client-auth entry.
+    pub fn psk(
+        client_name: impl Into<String>,
+        private_key: impl Into<String>,
+    ) -> Result<Self, ProtocolError> {
+        Self::new(LeaseSetClientAuthMode::Psk, client_name, private_key)
+    }
+
+    /// Get the authorization mode.
+    pub fn mode(&self) -> LeaseSetClientAuthMode {
+        self.mode
+    }
+
+    /// Get the unencoded client name.
+    pub fn client_name(&self) -> &str {
+        &self.client_name
     }
 
     /// Get the raw key material.
@@ -245,23 +393,39 @@ impl LeaseSetClientAuth {
     }
 
     pub(crate) fn validate(&self) -> Result<(), ProtocolError> {
-        if self.key.is_empty()
-            || self.key.len() > MAX_LEASE_SET_CLIENT_AUTH_KEY_LENGTH
-            || !is_valid_base64(&self.key)
+        if self.client_name.is_empty()
+            || self.client_name.len() > MAX_LEASE_SET_CLIENT_NAME_LENGTH
+            || self.client_name.bytes().any(|byte| byte.is_ascii_control())
+            || !is_valid_i2p_base64(&self.key, 32)
         {
             return Err(ProtocolError::InvalidOption);
         }
-        // Ensure no whitespace/control that would break SAM tokenization (base64 check already covers).
-        if self.key.bytes().any(|b| b.is_ascii_whitespace() || b.is_ascii_control()) {
-            return Err(ProtocolError::InvalidOption);
-        }
         Ok(())
+    }
+
+    pub(crate) fn wire_key_prefix(&self) -> &'static str {
+        match self.mode {
+            LeaseSetClientAuthMode::Dh => "i2cp.leaseSetClient.dh.",
+            LeaseSetClientAuthMode::Psk => "i2cp.leaseSetClient.psk.",
+        }
+    }
+
+    pub(crate) fn wire_value(&self) -> String {
+        format!(
+            "{}:{}",
+            encode_i2p_base64(self.client_name.as_bytes()),
+            self.key
+        )
     }
 }
 
 impl fmt::Debug for LeaseSetClientAuth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("LeaseSetClientAuth").field("key", &"<redacted>").finish()
+        f.debug_struct("LeaseSetClientAuth")
+            .field("mode", &self.mode)
+            .field("client_name", &self.client_name)
+            .field("key", &"<redacted>")
+            .finish()
     }
 }
 
@@ -469,10 +633,11 @@ pub struct SessionOptions {
     /// Defaults to 30 minutes.
     pub close_idle_time: Duration,
 
-    /// The type of authentication for encrypted LS2. 0 for no per-client authentication ;
-    /// 1 for DH per-client authentication; 2 for PSK per-client authentication; 3 for PSK (compatible).
+    /// The type of authentication for encrypted LS2. `0` means no per-client authentication;
+    /// `1` means DH per-client authentication; `2` means PSK per-client authentication.
     ///
-    /// Corresponds to `i2cp.leaseSetAuthType`. Validated to 0..3 and emitted only when non-zero.
+    /// Corresponds to `i2cp.leaseSetAuthType`. Validated to `0..=2` and emitted only when
+    /// non-zero.
     ///
     /// Defaults to `0`.
     pub lease_set_auth_type: usize,
@@ -480,7 +645,8 @@ pub struct SessionOptions {
     /// The sig type of the blinded key for encrypted LS2. Default depends on the destination sig
     /// type.
     ///
-    /// Corresponds to `i2cp.leaseSetBlindedType`. Validated to 0..12 and emitted only when non-zero.
+    /// Corresponds to `i2cp.leaseSetBlindedType`. Validated to `0..=65535` and emitted only when
+    /// non-zero.
     ///
     /// Defaults to `0`.
     pub lease_set_blinded_type: usize,
@@ -506,7 +672,7 @@ pub struct SessionOptions {
 
     /// Base 64 private keys for encryption.
     ///
-    /// Corresponds to `i2cp.leaseSetPrivKey`. Base64 validated, bounded.
+    /// Corresponds to `i2cp.leaseSetPrivateKey`. Base64 validated, bounded.
     ///
     /// Defauts to `None`.
     pub lease_set_private_key: Option<String>,
@@ -520,14 +686,14 @@ pub struct SessionOptions {
 
     /// Base 64 private key for signatures.
     ///
-    /// Corresponds to `i2cp.leaseSetSigningPrivKey`. Base64 validated, bounded.
+    /// Corresponds to `i2cp.leaseSetSigningPrivateKey`. Base64 validated, bounded.
     ///
     /// Defauts to `None`.
     pub lease_set_signing_private_key: Option<String>,
 
     /// The type of leaseset to be sent in the CreateLeaseSet2 Message.
     ///
-    /// Corresponds to `i2cp.leaseSetType`. Validated to 0..5 and emitted only when not `1`.
+    /// Corresponds to `i2cp.leaseSetType`. Validated to `1..=255` and emitted only when not `1`.
     ///
     /// Defaults to `1`.
     pub lease_set_type: usize,
@@ -569,11 +735,10 @@ pub struct SessionOptions {
 
     /// Bounded LeaseSet client-authorization entries.
     ///
-    /// Each entry is a validated base64-encoded key (e.g. X25519 public key for
-    /// DH/PSK). The collection is bounded, duplicate-free, and serialized
-    /// deterministically as `i2cp.leaseSetClientAuth.<index>` with indices
-    /// derived from sorted keys. This is a generic SAM transport; the router
-    /// remains authoritative for whether the entry is honored.
+    /// Each entry is a validated [`LeaseSetClientAuth`] with a DH or PSK mode,
+    /// a client name, and 32-byte key material. The collection is bounded and
+    /// duplicate-free per mode. Entries are serialized deterministically as
+    /// `i2cp.leaseSetClient.dh.<index>` or `i2cp.leaseSetClient.psk.<index>`.
     ///
     /// Defaults to empty.
     pub lease_set_client_auths: Vec<LeaseSetClientAuth>,
@@ -681,11 +846,6 @@ impl SessionOptions {
         {
             return Err(ProtocolError::InvalidOption);
         }
-        // Also reject if generic key collides with any typed LeaseSet option that is currently active.
-        if self.lease_set_typed_key_conflict(&option.key) {
-            return Err(ProtocolError::InvalidOption);
-        }
-
         self.additional_options.push(option);
         Ok(())
     }
@@ -693,24 +853,21 @@ impl SessionOptions {
     /// Add one validated LeaseSet client-auth entry.
     pub fn add_lease_set_client_auth(
         &mut self,
-        key: impl Into<String>,
+        entry: LeaseSetClientAuth,
     ) -> Result<(), ProtocolError> {
-        let entry = LeaseSetClientAuth::new(key)?;
+        entry.validate()?;
         if self.lease_set_client_auths.len() >= MAX_LEASE_SET_CLIENT_AUTHS
-            || self
-                .lease_set_client_auths
-                .iter()
-                .any(|existing| existing.key.eq_ignore_ascii_case(&entry.key))
+            || self.lease_set_client_auths.iter().any(|existing| {
+                existing.mode == entry.mode && existing.client_name == entry.client_name
+            })
         {
             return Err(ProtocolError::InvalidOption);
         }
-        // Also ensure no generic additional_option already occupies the derived wire key that
-        // this entry would eventually produce. Since wire keys are deterministic after sorting,
-        // we conservatively reject if any additional_option uses the client-auth prefix.
+        // Generic options reserve the whole client-auth namespace, including both modes.
         if self
             .additional_options
             .iter()
-            .any(|opt| opt.key.to_ascii_lowercase().starts_with("i2cp.leasesetclientauth."))
+            .any(|opt| is_reserved_session_option_key(&opt.key))
         {
             return Err(ProtocolError::InvalidOption);
         }
@@ -719,34 +876,22 @@ impl SessionOptions {
         Ok(())
     }
 
-    fn lease_set_typed_key_conflict(&self, key: &str) -> bool {
-        let mut typed_keys = Vec::new();
-        if self.encrypt_lease_set {
-            typed_keys.push("i2cp.encryptLeaseSet");
-        }
-        if self.lease_set_auth_type != 0 {
-            typed_keys.push("i2cp.leaseSetAuthType");
-        }
-        if self.lease_set_blinded_type != 0 {
-            typed_keys.push("i2cp.leaseSetBlindedType");
-        }
-        if self.lease_set_key.is_some() {
-            typed_keys.push("i2cp.leaseSetKey");
-        }
-        if self.lease_set_private_key.is_some() {
-            typed_keys.push("i2cp.leaseSetPrivKey");
-        }
-        if self.lease_set_secret.is_some() {
-            typed_keys.push("i2cp.leaseSetSecret");
-        }
-        if self.lease_set_signing_private_key.is_some() {
-            typed_keys.push("i2cp.leaseSetSigningPrivKey");
-        }
-        if self.lease_set_type != 1 {
-            typed_keys.push("i2cp.leaseSetType");
-        }
-        // Client auth entries occupy a namespace, not a single key, but conflict is already handled via prefix check.
-        typed_keys.iter().any(|k| k.eq_ignore_ascii_case(key))
+    /// Add one validated DH client-auth entry.
+    pub fn add_lease_set_dh_client_auth(
+        &mut self,
+        client_name: impl Into<String>,
+        public_key: impl Into<String>,
+    ) -> Result<(), ProtocolError> {
+        self.add_lease_set_client_auth(LeaseSetClientAuth::dh(client_name, public_key)?)
+    }
+
+    /// Add one validated PSK client-auth entry.
+    pub fn add_lease_set_psk_client_auth(
+        &mut self,
+        client_name: impl Into<String>,
+        private_key: impl Into<String>,
+    ) -> Result<(), ProtocolError> {
+        self.add_lease_set_client_auth(LeaseSetClientAuth::psk(client_name, private_key)?)
     }
 
     pub(crate) fn validate_additional_options(&self) -> Result<(), ProtocolError> {
@@ -768,16 +913,16 @@ impl SessionOptions {
     }
 
     pub(crate) fn validate_lease_set_options(&self) -> Result<(), ProtocolError> {
-        // auth type: 0 = none, 1 = DH, 2 = PSK, 3 = PSK (I2P BlindData allows 3); allow 0..3.
-        if self.lease_set_auth_type > 3 {
+        // Reference contract: 0 = none, 1 = DH, 2 = PSK.
+        if self.lease_set_auth_type > 2 {
             return Err(ProtocolError::InvalidOption);
         }
-        // blinded type: 0 = default, otherwise must be a known SigType code (7, 8, 9, 10, 11 are common). Allow 0..12 for forward compat.
-        if self.lease_set_blinded_type > 12 {
+        // The blinded signature type is a two-byte wire identifier; zero selects the default.
+        if self.lease_set_blinded_type > u16::MAX as usize {
             return Err(ProtocolError::InvalidOption);
         }
-        // lease_set_type: 0..5 plausible; default 1. Allow 0..5.
-        if self.lease_set_type > 5 {
+        // The LeaseSet type is a one-byte identifier. Type 1 is the default and zero is invalid.
+        if !(1..=u8::MAX as usize).contains(&self.lease_set_type) {
             return Err(ProtocolError::InvalidOption);
         }
         if let Some(value) = &self.lease_set_key {
@@ -822,7 +967,7 @@ impl SessionOptions {
             entry.validate()?;
             if self.lease_set_client_auths[index + 1..]
                 .iter()
-                .any(|other| other.key.eq_ignore_ascii_case(&entry.key))
+                .any(|other| other.mode == entry.mode && other.client_name == entry.client_name)
             {
                 return Err(ProtocolError::InvalidOption);
             }
@@ -830,9 +975,7 @@ impl SessionOptions {
 
         // Conflict: typed LeaseSet keys must not already be present as generic additional_options.
         for option in &self.additional_options {
-            if self.lease_set_typed_key_conflict(&option.key)
-                || option.key.to_ascii_lowercase().starts_with("i2cp.leasesetclientauth.")
-            {
+            if is_reserved_session_option_key(&option.key) {
                 return Err(ProtocolError::InvalidOption);
             }
         }
