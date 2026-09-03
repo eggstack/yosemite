@@ -637,7 +637,8 @@ pub struct SessionOptions {
     /// `1` means DH per-client authentication; `2` means PSK per-client authentication.
     ///
     /// Corresponds to `i2cp.leaseSetAuthType`. Validated to `0..=2` and emitted only when
-    /// non-zero.
+    /// non-zero. Non-zero values require `lease_set_type == 5`; the reference permits the
+    /// selected numbered client-auth namespace to be empty.
     ///
     /// Defaults to `0`.
     pub lease_set_auth_type: usize,
@@ -737,8 +738,10 @@ pub struct SessionOptions {
     ///
     /// Each entry is a validated [`LeaseSetClientAuth`] with a DH or PSK mode,
     /// a client name, and 32-byte key material. The collection is bounded and
-    /// duplicate-free per mode. Entries are serialized deterministically as
-    /// `i2cp.leaseSetClient.dh.<index>` or `i2cp.leaseSetClient.psk.<index>`.
+    /// duplicate-free per mode. Entries require `lease_set_type == 5` and must all match the
+    /// selected nonzero `lease_set_auth_type`; otherwise the reference client would ignore them.
+    /// Entries are serialized deterministically as `i2cp.leaseSetClient.dh.<index>` or
+    /// `i2cp.leaseSetClient.psk.<index>`.
     ///
     /// Defaults to empty.
     pub lease_set_client_auths: Vec<LeaseSetClientAuth>,
@@ -980,13 +983,27 @@ impl SessionOptions {
             }
         }
 
-        // Fail-closed: if encrypt_lease_set is true but no LeaseSet material is provided, we still
-        // allow it (router will decide), but if auth_type requires client auths and none are present,
-        // we must not silently continue with a weaker config. The plan says no weaker fallback, so
-        // if auth_type !=0 but client_auths is empty, we could allow but router will handle. However
-        // to enforce fail-closed for clearly inconsistent config, we reject auth_type !=0 with empty client auths?
-        // For now we allow empty; the wire will contain auth type but no entries, which is still explicit.
-        // The important fail-closed is: invalid fields must error, not be omitted.
+        // The Java client consumes per-client entries only while constructing an encrypted LS2
+        // (type 5), and selects exactly one numbered namespace from the auth type. A mismatched
+        // typed entry would otherwise be serialized successfully and silently ignored.
+        let selected_mode = match self.lease_set_auth_type {
+            0 => None,
+            1 => Some(LeaseSetClientAuthMode::Dh),
+            2 => Some(LeaseSetClientAuthMode::Psk),
+            _ => unreachable!("auth type was validated above"),
+        };
+        if (selected_mode.is_some() || !self.lease_set_client_auths.is_empty())
+            && self.lease_set_type != 5
+        {
+            return Err(ProtocolError::InvalidOption);
+        }
+        if self
+            .lease_set_client_auths
+            .iter()
+            .any(|entry| Some(entry.mode()) != selected_mode)
+        {
+            return Err(ProtocolError::InvalidOption);
+        }
 
         Ok(())
     }

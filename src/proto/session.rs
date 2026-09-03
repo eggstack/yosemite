@@ -301,12 +301,15 @@ impl SessionController {
                         .push(("i2cp.leaseSetSigningPrivateKey".to_string(), value.clone()));
                 }
 
-                // Number each authorization mode independently, in deterministic wire-value
-                // order. Validation has already rejected duplicate names within a mode.
-                for mode in [
-                    crate::options::LeaseSetClientAuthMode::Dh,
-                    crate::options::LeaseSetClientAuthMode::Psk,
-                ] {
+                // The reference consumes only the namespace selected by auth type. Validation
+                // has already rejected entries from any other mode and duplicate names.
+                let selected_mode = match self.options.lease_set_auth_type {
+                    1 => Some(crate::options::LeaseSetClientAuthMode::Dh),
+                    2 => Some(crate::options::LeaseSetClientAuthMode::Psk),
+                    0 => None,
+                    _ => unreachable!("auth type was validated before serialization"),
+                };
+                if let Some(mode) = selected_mode {
                     let mut auths = self
                         .options
                         .lease_set_client_auths
@@ -795,6 +798,23 @@ mod tests {
             options: Vec::new(),
         })?;
         Ok(String::from_utf8(command).unwrap())
+    }
+
+    fn assert_invalid_lease_set_auth_options(options: SessionOptions) {
+        const SECRET: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let debug = format!("{options:?}");
+        assert!(!debug.contains(SECRET));
+        assert!(SessionController::new(options.clone()).is_err());
+
+        let mut controller = handshaked_controller(SessionOptions::default());
+        controller.options = options;
+        let result = controller.create_session(SessionParameters {
+            style: "STREAM".to_string(),
+            options: Vec::new(),
+        });
+        assert_eq!(result, Err(ProtocolError::InvalidOption));
+        assert_eq!(controller.state, SessionState::Handshaked);
+        assert!(!format!("{result:?}").contains(SECRET));
     }
 
     fn option_count(command: &str, key: &str) -> usize {
@@ -1429,7 +1449,7 @@ mod tests {
             encrypt_lease_set: true,
             lease_set_auth_type: 1,
             lease_set_blinded_type: 10,
-            lease_set_type: 3,
+            lease_set_type: 5,
             lease_set_key: Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string()),
             lease_set_private_key: Some("BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=".to_string()),
             lease_set_secret: Some("c2VjcmV0LXZhbHVlLWZpeHR1cmU=".to_string()),
@@ -1451,7 +1471,7 @@ mod tests {
         assert!(command.contains("i2cp.encryptLeaseSet=true"));
         assert!(command.contains("i2cp.leaseSetAuthType=1"));
         assert!(command.contains("i2cp.leaseSetBlindedType=10"));
-        assert!(command.contains("i2cp.leaseSetType=3"));
+        assert!(command.contains("i2cp.leaseSetType=5"));
         assert!(command.contains("i2cp.leaseSetKey=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
         assert!(command
             .contains("i2cp.leaseSetPrivateKey=BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="));
@@ -1466,18 +1486,16 @@ mod tests {
 
     #[test]
     fn session_create_serializes_leaseset_client_auths_deterministically() {
-        let mut options = SessionOptions::default();
         const KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
-        // Insert both modes out of order to verify deterministic per-mode numbering.
-        options
-            .add_lease_set_client_auth(LeaseSetClientAuth::psk("zulu", KEY).unwrap())
-            .unwrap();
+        // Insert one coherent DH mode out of order to verify deterministic numbering.
+        let mut options = SessionOptions {
+            lease_set_auth_type: 1,
+            lease_set_type: 5,
+            ..Default::default()
+        };
         options
             .add_lease_set_client_auth(LeaseSetClientAuth::dh("zulu", KEY).unwrap())
-            .unwrap();
-        options
-            .add_lease_set_client_auth(LeaseSetClientAuth::psk("alice", KEY).unwrap())
             .unwrap();
         options
             .add_lease_set_client_auth(LeaseSetClientAuth::dh("alice", KEY).unwrap())
@@ -1486,36 +1504,131 @@ mod tests {
         let command = create_stream_command(options).unwrap();
         assert_eq!(option_count(&command, "i2cp.leaseSetClient.dh.0"), 1);
         assert_eq!(option_count(&command, "i2cp.leaseSetClient.dh.1"), 1);
-        assert_eq!(option_count(&command, "i2cp.leaseSetClient.psk.0"), 1);
-        assert_eq!(option_count(&command, "i2cp.leaseSetClient.psk.1"), 1);
         assert!(command.contains(&format!("i2cp.leaseSetClient.dh.0=YWxpY2U=:{KEY}")));
         assert!(command.contains(&format!("i2cp.leaseSetClient.dh.1=enVsdQ==:{KEY}")));
-        assert!(command.contains(&format!("i2cp.leaseSetClient.psk.0=YWxpY2U=:{KEY}")));
-        assert!(command.contains(&format!("i2cp.leaseSetClient.psk.1=enVsdQ==:{KEY}")));
+        assert_eq!(option_count(&command, "i2cp.leaseSetClient.psk.0"), 0);
+
         // Second creation must be identical (deterministic) modulo random nickname.
-        let mut options2 = SessionOptions::default();
+        let mut options2 = SessionOptions {
+            lease_set_auth_type: 1,
+            lease_set_type: 5,
+            ..Default::default()
+        };
         options2
             .add_lease_set_client_auth(LeaseSetClientAuth::dh("alice", KEY).unwrap())
             .unwrap();
         options2
-            .add_lease_set_client_auth(LeaseSetClientAuth::psk("alice", KEY).unwrap())
-            .unwrap();
-        options2
             .add_lease_set_client_auth(LeaseSetClientAuth::dh("zulu", KEY).unwrap())
-            .unwrap();
-        options2
-            .add_lease_set_client_auth(LeaseSetClientAuth::psk("zulu", KEY).unwrap())
             .unwrap();
         let command2 = create_stream_command(options2).unwrap();
         // Compare suffix after SIGNATURE_TYPE to ignore random ID.
         let suffix = |cmd: &str| cmd.split("SIGNATURE_TYPE=7").nth(1).unwrap_or("").to_string();
         assert_eq!(suffix(&command), suffix(&command2));
+
+        // PSK is a separate coherent mode and cannot cause the DH namespace to be emitted.
+        let mut psk_options = SessionOptions {
+            lease_set_auth_type: 2,
+            lease_set_type: 5,
+            ..Default::default()
+        };
+        psk_options
+            .add_lease_set_client_auth(LeaseSetClientAuth::psk("alice", KEY).unwrap())
+            .unwrap();
+        let psk_command = create_stream_command(psk_options).unwrap();
+        assert_eq!(option_count(&psk_command, "i2cp.leaseSetClient.dh.0"), 0);
+        assert_eq!(option_count(&psk_command, "i2cp.leaseSetClient.psk.0"), 1);
+        assert!(psk_command.contains(&format!("i2cp.leaseSetClient.psk.0=YWxpY2U=:{KEY}")));
+    }
+
+    #[test]
+    fn lease_set_auth_mode_and_type_consistency_is_fail_closed() {
+        const KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+        let dh = LeaseSetClientAuth::dh("alice", KEY).unwrap();
+        let psk = LeaseSetClientAuth::psk("alice", KEY).unwrap();
+
+        // The Java handler signs without per-client entries for auth type 0, reads only DH
+        // entries for type 1, and reads only PSK entries for type 2.
+        for options in [
+            SessionOptions {
+                lease_set_auth_type: 0,
+                lease_set_type: 5,
+                lease_set_client_auths: vec![dh.clone()],
+                ..Default::default()
+            },
+            SessionOptions {
+                lease_set_auth_type: 0,
+                lease_set_type: 5,
+                lease_set_client_auths: vec![psk.clone()],
+                ..Default::default()
+            },
+            SessionOptions {
+                lease_set_auth_type: 1,
+                lease_set_type: 5,
+                lease_set_client_auths: vec![psk.clone()],
+                ..Default::default()
+            },
+            SessionOptions {
+                lease_set_auth_type: 1,
+                lease_set_type: 5,
+                lease_set_client_auths: vec![dh.clone(), psk.clone()],
+                ..Default::default()
+            },
+            SessionOptions {
+                lease_set_auth_type: 2,
+                lease_set_type: 5,
+                lease_set_client_auths: vec![dh.clone()],
+                ..Default::default()
+            },
+            SessionOptions {
+                lease_set_auth_type: 2,
+                lease_set_type: 5,
+                lease_set_client_auths: vec![dh.clone(), psk.clone()],
+                ..Default::default()
+            },
+        ] {
+            assert_invalid_lease_set_auth_options(options);
+        }
+
+        // Auth settings and client entries are meaningful only for Encrypted LS2 (type 5), not
+        // for the ordinary LS1, LS2, or Meta LS2 type identifiers.
+        for lease_set_type in [1, 3, 7] {
+            assert_invalid_lease_set_auth_options(SessionOptions {
+                lease_set_auth_type: 1,
+                lease_set_type,
+                lease_set_client_auths: vec![dh.clone()],
+                ..Default::default()
+            });
+        }
+        assert_invalid_lease_set_auth_options(SessionOptions {
+            lease_set_auth_type: 2,
+            lease_set_type: 3,
+            ..Default::default()
+        });
+
+        // The reference permits an empty numbered set: its optional router-local leaseSetPrivKey
+        // is separate from these external client entries. The selected auth mode is still
+        // explicit and no unrelated namespace is emitted.
+        for auth_type in [1, 2] {
+            let command = create_stream_command(SessionOptions {
+                lease_set_auth_type: auth_type,
+                lease_set_type: 5,
+                ..Default::default()
+            })
+            .unwrap();
+            assert!(command.contains(&format!("i2cp.leaseSetAuthType={auth_type}")));
+            assert_eq!(option_count(&command, "i2cp.leaseSetClient.dh.0"), 0);
+            assert_eq!(option_count(&command, "i2cp.leaseSetClient.psk.0"), 0);
+        }
     }
 
     #[test]
     fn lease_set_client_auth_rejects_duplicates_and_bounds() {
         const KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
-        let mut options = SessionOptions::default();
+        let mut options = SessionOptions {
+            lease_set_auth_type: 1,
+            lease_set_type: 5,
+            ..Default::default()
+        };
         let alice = LeaseSetClientAuth::dh("alice", KEY).unwrap();
         options.add_lease_set_client_auth(alice.clone()).unwrap();
         assert!(options.add_lease_set_client_auth(alice).is_err());
@@ -1527,13 +1640,23 @@ mod tests {
                     .unwrap()
             )
             .is_err());
-        // The same display name may be used once in each distinct reference namespace.
-        options
+        // A duplicate display name in the other namespace is independently well-formed, but
+        // cross-mode use is rejected by validate_lease_set_options().
+        let mut psk_options = SessionOptions {
+            lease_set_auth_type: 2,
+            lease_set_type: 5,
+            ..Default::default()
+        };
+        psk_options
             .add_lease_set_client_auth(LeaseSetClientAuth::psk("alice", KEY).unwrap())
             .unwrap();
 
         // Max count
-        let mut many = SessionOptions::default();
+        let mut many = SessionOptions {
+            lease_set_auth_type: 1,
+            lease_set_type: 5,
+            ..Default::default()
+        };
         for i in 0..MAX_LEASE_SET_CLIENT_AUTHS {
             many.add_lease_set_client_auth(
                 LeaseSetClientAuth::dh(format!("client-{i}"), KEY).unwrap(),
@@ -1651,6 +1774,7 @@ mod tests {
         for auth_type in [0, 1, 2] {
             let options = SessionOptions {
                 lease_set_auth_type: auth_type,
+                lease_set_type: if auth_type == 0 { 1 } else { 5 },
                 ..Default::default()
             };
             let command = create_stream_command(options).unwrap();
